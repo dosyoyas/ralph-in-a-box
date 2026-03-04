@@ -54,10 +54,12 @@ Group deliverables by feature. Each group becomes an Epic, each bullet becomes a
 
 ```markdown
 ## Feature 1: User Authentication
+
 - Add login endpoint with JWT token generation
 - Add auth middleware for protected routes
 
 ## Feature 2: User Profile
+
 - Create profile page with edit capability
 - Depends on: auth middleware from Feature 1
 ```
@@ -68,17 +70,17 @@ Cross-group dependencies are supported. The bootstrap agent will use `bd dep add
 
 - **Docker** — containers are the only runtime dependency
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated on the host** — the container copies `~/.claude` at startup
-- **Your project must be a git repository** — ralph-loop commits and pushes code via git
+- **Your project must be a git repository** — ralph-in-a-box commits and pushes code via git
 
-ralph-loop supports three authentication modes:
+ralph-in-a-box supports three authentication modes:
 
-| Mode | Setup | How to run |
-|---|---|---|
-| **Subscription** (Max plan) | `claude login` on the host | `./run_container.sh /path/to/project` |
-| **API key** | Get key from [console.anthropic.com](https://console.anthropic.com) | `ANTHROPIC_API_KEY=sk-ant-... ./run_container.sh /path/to/project` |
-| **AWS Bedrock** | Configure `~/.aws` credentials | `CLAUDE_CODE_USE_BEDROCK=1 ./run_container.sh /path/to/project` |
+| Mode                        | Setup                                                               | How to run                                                         |
+| --------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **Subscription** (Max plan) | `claude login` on the host                                          | `./run_container.sh /path/to/project`                              |
+| **API key**                 | Get key from [console.anthropic.com](https://console.anthropic.com) | `ANTHROPIC_API_KEY=sk-ant-... ./run_container.sh /path/to/project` |
+| **AWS Bedrock**             | Configure `~/.aws` credentials                                      | `CLAUDE_CODE_USE_BEDROCK=1 ./run_container.sh /path/to/project`    |
 
-The default (no env vars) uses the OAuth session from `~/.claude/`, which is what you get with a Claude Code subscription (Max plan). Just run `claude login` once before using ralph-loop.
+The default (no env vars) uses the OAuth session from `~/.claude/`, which is what you get with a Claude Code subscription (Max plan). Just run `claude login` once before using ralph-in-a-box.
 
 ## Quick Start
 
@@ -86,7 +88,7 @@ The default (no env vars) uses the OAuth session from `~/.claude/`, which is wha
 
 ```bash
 # 1. Build the image (once)
-docker build -f Dockerfile.python -t ralph-loop:latest .
+docker build -f Dockerfile.python -t ralph-in-a-box:latest .
 
 # 2. Create your plan in the project root
 cat > /path/to/project/ACTION_PLAN.md << 'EOF'
@@ -104,8 +106,8 @@ For API key or Bedrock auth, prefix with the relevant env var (see [Prerequisite
 ### Rust projects
 
 ```bash
-docker build -f Dockerfile.rust -t ralph-loop-rust:latest .
-RALPH_IMAGE=ralph-loop-rust:latest ./run_container.sh /path/to/project DO_TASK_RUST.md
+docker build -f Dockerfile.rust -t ralph-in-a-box-rust:latest .
+RALPH_IMAGE=ralph-in-a-box-rust:latest ./run_container.sh /path/to/project DO_TASK_RUST.md
 ```
 
 ### What to expect
@@ -129,19 +131,19 @@ The loop exits automatically when all tasks are completed (exit code 0), or stop
 
 ## Pipeline Phases
 
-| Phase | Prefix | On Success | On Failure |
-|---|---|---|---|
-| Bootstrap | — | Create Epics + `[impl]` tasks | Exit with error |
-| Implement | `[impl]` | Create `[test]` task | Report blocker |
-| Test | `[test]` | Create `[review]` task | Reopen `[impl]` with error |
-| Review | `[review]` | Commit + close Epic | Reopen `[test]` with error |
-| Verify | — | Print coverage report | — (informational only) |
+| Phase     | Prefix     | On Success                    | On Failure                 |
+| --------- | ---------- | ----------------------------- | -------------------------- |
+| Bootstrap | —          | Create Epics + `[impl]` tasks | Exit with error            |
+| Implement | `[impl]`   | Create `[test]` task          | Report blocker             |
+| Test      | `[test]`   | Create `[review]` task        | Reopen `[impl]` with error |
+| Review    | `[review]` | Commit + close Epic           | Reopen `[test]` with error |
+| Verify    | —          | Print coverage report         | — (informational only)     |
 
 Failures retry up to 3 times before creating a blocker task for manual intervention.
 
 ### Verification
 
-When all tasks are completed and `ACTION_PLAN.md` exists, ralph-loop runs one final Claude invocation to compare the plan against completed tasks. The output is a coverage report:
+When all tasks are completed and `ACTION_PLAN.md` exists, ralph-in-a-box runs one final Claude invocation to compare the plan against completed tasks. The output is a coverage report:
 
 ```
 ACTION_PLAN.md Coverage Report
@@ -163,38 +165,38 @@ This is informational only — it never blocks the push or creates new tasks. If
 
 All settings are environment variables, passed before `run_container.sh`:
 
-| Variable | Default | Description |
-|---|---|---|
-| `MAX_ITERATIONS` | `50` | Maximum loop iterations before stopping |
-| `MAX_COST` | `100.00` | Maximum spend in USD before stopping (API/Bedrock only — subscription reports $0) |
-| `RALPH_IMAGE` | `ralph-loop:latest` | Docker image to use |
-| `CLAUDE_CODE_USE_BEDROCK` | — | Set to `1` to use AWS Bedrock (mounts `~/.aws` read-only) |
-| `ANTHROPIC_API_KEY` | — | API key for direct API billing |
-| `ANTHROPIC_MODEL` | — | Override the Claude model (works with all auth modes) |
-| `ANTHROPIC_SMALL_FAST_MODEL` | — | Override the small/fast model |
-| `AWS_PROFILE` | — | AWS profile to use (Bedrock mode only) |
-| `AWS_REGION` | — | AWS region (Bedrock mode only) |
+| Variable                     | Default                 | Description                                                                       |
+| ---------------------------- | ----------------------- | --------------------------------------------------------------------------------- |
+| `MAX_ITERATIONS`             | `50`                    | Maximum loop iterations before stopping                                           |
+| `MAX_COST`                   | `100.00`                | Maximum spend in USD before stopping (API/Bedrock only — subscription reports $0) |
+| `RALPH_IMAGE`                | `ralph-in-a-box:latest` | Docker image to use                                                               |
+| `CLAUDE_CODE_USE_BEDROCK`    | —                       | Set to `1` to use AWS Bedrock (mounts `~/.aws` read-only)                         |
+| `ANTHROPIC_API_KEY`          | —                       | API key for direct API billing                                                    |
+| `ANTHROPIC_MODEL`            | —                       | Override the Claude model (works with all auth modes)                             |
+| `ANTHROPIC_SMALL_FAST_MODEL` | —                       | Override the small/fast model                                                     |
+| `AWS_PROFILE`                | —                       | AWS profile to use (Bedrock mode only)                                            |
+| `AWS_REGION`                 | —                       | AWS region (Bedrock mode only)                                                    |
 
 The phase executor prompt is selected via the second positional argument to `run_container.sh` (defaults to `DO_TASK_PYTHON.md`):
 
 ```bash
 MAX_ITERATIONS=20 MAX_COST=10.00 ./run_container.sh /path/to/project
-MAX_ITERATIONS=20 MAX_COST=10.00 RALPH_IMAGE=ralph-loop-rust:latest ./run_container.sh /path/to/project DO_TASK_RUST.md
+MAX_ITERATIONS=20 MAX_COST=10.00 RALPH_IMAGE=ralph-in-a-box-rust:latest ./run_container.sh /path/to/project DO_TASK_RUST.md
 ```
 
 ## Container Isolation
 
 The Docker boundary is the security perimeter. Claude runs with `--dangerously-skip-permissions` inside the container — the container itself limits what it can reach.
 
-| Mount | Path in Container | Access | Condition |
-|---|---|---|---|
-| Project workspace | `/workspace` | read/write | Always |
-| `~/.claude` (temp copy) | `/root/.claude` | read/write | Always |
-| `~/.aws` | `/root/.aws` | read-only | Bedrock only |
-| `run_ralph.sh` | `/opt/ralph/run_ralph.sh` | read-only | Always |
-| `DO_TASK.md` | `/opt/ralph/DO_TASK.md` | read-only | Always |
-| `BOOTSTRAP.md` | `/opt/ralph/BOOTSTRAP.md` | read-only | Always |
-| `VERIFY.md` | `/opt/ralph/VERIFY.md` | read-only | Always |
+| Mount                   | Path in Container         | Access     | Condition    |
+| ----------------------- | ------------------------- | ---------- | ------------ |
+| Project workspace       | `/workspace`              | read/write | Always       |
+| `~/.claude` (temp copy) | `/root/.claude`           | read/write | Always       |
+| `~/.aws`                | `/root/.aws`              | read-only  | Bedrock only |
+| `run_ralph.sh`          | `/opt/ralph/run_ralph.sh` | read-only  | Always       |
+| `DO_TASK.md`            | `/opt/ralph/DO_TASK.md`   | read-only  | Always       |
+| `BOOTSTRAP.md`          | `/opt/ralph/BOOTSTRAP.md` | read-only  | Always       |
+| `VERIFY.md`             | `/opt/ralph/VERIFY.md`    | read-only  | Always       |
 
 ## Project Conventions with CLAUDE.md
 
@@ -224,7 +226,7 @@ Your project's `CLAUDE.md` just needs one line to pull in the specs:
 Before starting any task, read all files in the specs/ directory if it exists.
 ```
 
-This gives you composable, per-project conventions without any ralph-loop code changes — it works today with standard Claude Code behavior.
+This gives you composable, per-project conventions without any ralph-in-a-box code changes — it works today with standard Claude Code behavior.
 
 ## Live Monitoring
 
@@ -242,14 +244,14 @@ tail -f /tmp/ralph_logs/claude_live_<project>.log
 
 ## Exit Codes
 
-| Code | Meaning |
-|---|---|
-| `0` | All tasks completed, changes pushed |
-| `1` | No tasks and no ACTION_PLAN.md found |
-| `2` | Blocked — manual intervention required |
-| `3` | MAX_ITERATIONS reached |
-| `4` | MAX_COST exceeded |
-| other | Claude error |
+| Code  | Meaning                                |
+| ----- | -------------------------------------- |
+| `0`   | All tasks completed, changes pushed    |
+| `1`   | No tasks and no ACTION_PLAN.md found   |
+| `2`   | Blocked — manual intervention required |
+| `3`   | MAX_ITERATIONS reached                 |
+| `4`   | MAX_COST exceeded                      |
+| other | Claude error                           |
 
 ## Manual Task Creation
 
@@ -277,13 +279,13 @@ rm -rf /path/to/project/.beads
 
 `test_projects/` contains minimal standalone workspaces used to validate the pipeline:
 
-| Directory | Language | What it tests |
-|---|---|---|
-| `test_projects/test_python/` | Python | Stats utilities — pytest + ruff pipeline |
-| `test_projects/test_rust/` | Rust | Math utilities — cargo test + clippy pipeline |
-| `test_projects/test_generic/` | Python | Generic string utilities |
-| `test_projects/test_direct/` | Python | Direct task execution (pre-created tasks) |
-| `test_projects/test_agents/` | Python | Multi-agent variant |
+| Directory                     | Language | What it tests                                 |
+| ----------------------------- | -------- | --------------------------------------------- |
+| `test_projects/test_python/`  | Python   | Stats utilities — pytest + ruff pipeline      |
+| `test_projects/test_rust/`    | Rust     | Math utilities — cargo test + clippy pipeline |
+| `test_projects/test_generic/` | Python   | Generic string utilities                      |
+| `test_projects/test_direct/`  | Python   | Direct task execution (pre-created tasks)     |
+| `test_projects/test_agents/`  | Python   | Multi-agent variant                           |
 
 Each is an independent git repository. To run a full pipeline test from an `ACTION_PLAN.md`:
 
@@ -302,5 +304,5 @@ This project is a direct implementation of the Ralph technique described by Geof
 - [Ralph Wiggum as a "software engineer"](https://ghuntley.com/ralph/) — the original technique, the loop philosophy, and prompt engineering for agentic loops
 - [Everything is a ralph loop](https://ghuntley.com/loop/) — Ralph as a mindset: the loop as the fundamental unit of software construction
 
-> *"Ralph is monolithic. Ralph works autonomously in a single repository as a single process that performs one task per loop."*
+> _"Ralph is monolithic. Ralph works autonomously in a single repository as a single process that performs one task per loop."_
 > — Geoffrey Huntley
