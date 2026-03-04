@@ -1,4 +1,4 @@
-# ralph-loop
+# ralph-in-a-box
 
 Autonomous software engineering in a container. Give it a plan, walk away, come back to committed code.
 
