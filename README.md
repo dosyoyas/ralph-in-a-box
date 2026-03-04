@@ -1,8 +1,8 @@
 # ralph-in-a-box
 
-Autonomous software engineering in a container. Give it a plan, walk away, come back to committed code.
+Autonomous software engineering in a container, because YOLO. Give it a plan, walk away, come back to committed code.
 
-ralph-loop is a Docker-based implementation of the [Ralph technique](https://ghuntley.com/ralph/) by Geoffrey Huntley. It runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in a bash loop — one task per iteration — with structured task tracking via [beads](https://beads.sh) (a CLI task tracker, invoked as `bd`), a three-phase pipeline (implement → test → review), automatic bootstrapping from a plain-text action plan, and a verification step that checks plan coverage before pushing.
+ralph-in-a-box is a Docker-based implementation of the [Ralph technique](https://ghuntley.com/ralph/) by Geoffrey Huntley. It runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in a bash loop — one task per iteration — with structured task tracking via [beads](https://beads.sh) (a CLI task tracker, invoked as `bd`), a three-phase pipeline (implement → test → review), automatic bootstrapping from a plain-text action plan, and a verification step that checks plan coverage before pushing.
 
 Each feature in your plan becomes an **Epic** (a group of related tasks). Each deliverable goes through three phases as individual tasks, identified by prefix: **`[impl]`** (write code), **`[test]`** (run tests), **`[review]`** (lint, simplify, commit). Claude completes one task per iteration, then exits to reset its context window — task descriptions carry context between iterations, not conversation history.
 
