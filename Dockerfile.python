@@ -1,0 +1,49 @@
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bc \
+    ca-certificates \
+    curl \
+    gh \
+    git \
+    jq \
+    openssh-client \
+    python3 \
+    python3-pip \
+    python3-venv \
+    ripgrep \
+    sudo \
+    tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+# Trust github.com SSH key for git over SSH
+RUN mkdir -p -m 700 /root/.ssh \
+    && ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts \
+    && chmod 600 /root/.ssh/known_hosts
+
+# Install beads CLI via npm — pin to 0.55.4 (0.56+ dropped embedded Dolt mode)
+RUN npm install -g @beads/bd@0.55.4 \
+    && ln -sf /usr/local/bin/bd /usr/local/bin/beads \
+    && bd --version
+
+# Install Python dev tools (ruff handles formatting + linting + import sorting)
+RUN pip3 install --break-system-packages \
+    pytest \
+    ruff \
+    pyrefly
+
+# Install Claude Code CLI — pin to 2.1.50 to match Rust image
+RUN npm install -g @anthropic-ai/claude-code@2.1.50
+
+ENV PATH="/root/.local/bin:${PATH}"
+
+COPY run_ralph.sh /opt/ralph/run_ralph.sh
+COPY DO_TASK_PYTHON.md /opt/ralph/DO_TASK.md
+COPY BOOTSTRAP.md /opt/ralph/BOOTSTRAP.md
+COPY VERIFY.md /opt/ralph/VERIFY.md
+
+RUN chmod +x /opt/ralph/run_ralph.sh
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/opt/ralph/run_ralph.sh"]

@@ -1,0 +1,19 @@
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# Beads runtime state (created by bd init in each workspace)
+.beads/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Rust
+target/
+
+# Docker temp files
+/tmp/ralph-claude-*/
+/tmp/ralph_logs/
