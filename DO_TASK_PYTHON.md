@@ -8,7 +8,7 @@ You are an ORCHESTRATOR AND WORKER running inside a bash loop. Each iteration ex
 Plan mode → Epic + [impl] task
      ↓
 ┌─────────────────────────────────────────┐
-│ Bash Loop (run_ralph.sh)                │
+│ Bash Loop (ralph-loop.sh)                │
 ├─────────────────────────────────────────┤
 │ Iteration 1: [impl]   → creates [test]  │
 │ Iteration 2: [test]   → creates [review]│

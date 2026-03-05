@@ -40,13 +40,13 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.50
 
 ENV PATH="/root/.local/bin:${PATH}"
 
-COPY run_ralph.sh /opt/ralph/run_ralph.sh
+COPY ralph-loop.sh /opt/ralph/ralph-loop.sh
 COPY DO_TASK_RUST.md /opt/ralph/DO_TASK.md
 COPY BOOTSTRAP.md /opt/ralph/BOOTSTRAP.md
 COPY VERIFY.md /opt/ralph/VERIFY.md
 
-RUN chmod +x /opt/ralph/run_ralph.sh
+RUN chmod +x /opt/ralph/ralph-loop.sh
 
 WORKDIR /workspace
 
-ENTRYPOINT ["/opt/ralph/run_ralph.sh"]
+ENTRYPOINT ["/opt/ralph/ralph-loop.sh"]

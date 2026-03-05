@@ -15,7 +15,7 @@ VERIFY_FILE="${VERIFY_FILE:-/opt/ralph/VERIFY.md}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-50}"
 MAX_COST="${MAX_COST:-100.00}"
 
-# Use shared log directory and project name (set by run_container.sh) or fallback
+# Use shared log directory and project name (set by ralph-in-a-box.sh) or fallback
 LOG_DIR="${RALPH_LOG_DIR:-/tmp}"
 PROJECT_NAME="${RALPH_PROJECT_NAME:-$(basename "$(pwd)")}"
 LOG_FILE="${LOG_DIR}/claude_live_${PROJECT_NAME}.log"
@@ -61,7 +61,7 @@ parse_stream() {
     done
 }
 
-# Initialize log files (monitoring is handled by host via run_container.sh)
+# Initialize log files (monitoring is handled by host via ralph-in-a-box.sh)
 mkdir -p "$LOG_DIR"
 >"$LOG_FILE"
 echo "0" >"$COST_FILE"

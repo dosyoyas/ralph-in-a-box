@@ -12,11 +12,11 @@ Each feature in your plan becomes an **Epic** (a group of related tasks). Each d
 ACTION_PLAN.md (you write this)
       │
       ▼
-run_container.sh /path/to/project
+ralph-in-a-box.sh /path/to/project
       │
 ┌─────┴──────────────────────────────────────────┐
 │  Docker container (isolated)                    │
-│  run_ralph.sh                                   │
+│  ralph-loop.sh                                   │
 │                                                 │
 │  ┌───────────────────────────────────────────┐  │
 │  │ Iteration 0: BOOTSTRAP                    │  │
@@ -76,9 +76,9 @@ ralph-in-a-box supports three authentication modes:
 
 | Mode                        | Setup                                                               | How to run                                                         |
 | --------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **Subscription** (Max plan) | `claude login` on the host                                          | `./run_container.sh /path/to/project`                              |
-| **API key**                 | Get key from [console.anthropic.com](https://console.anthropic.com) | `ANTHROPIC_API_KEY=sk-ant-... ./run_container.sh /path/to/project` |
-| **AWS Bedrock**             | Configure `~/.aws` credentials                                      | `CLAUDE_CODE_USE_BEDROCK=1 ./run_container.sh /path/to/project`    |
+| **Subscription** (Max plan) | `claude login` on the host                                          | `./ralph-in-a-box.sh /path/to/project`                              |
+| **API key**                 | Get key from [console.anthropic.com](https://console.anthropic.com) | `ANTHROPIC_API_KEY=sk-ant-... ./ralph-in-a-box.sh /path/to/project` |
+| **AWS Bedrock**             | Configure `~/.aws` credentials                                      | `CLAUDE_CODE_USE_BEDROCK=1 ./ralph-in-a-box.sh /path/to/project`    |
 
 The default (no env vars) uses the OAuth session from `~/.claude/`, which is what you get with a Claude Code subscription (Max plan). Just run `claude login` once before using ralph-in-a-box.
 
@@ -98,7 +98,7 @@ cat > /path/to/project/ACTION_PLAN.md << 'EOF'
 EOF
 
 # 3. Run
-./run_container.sh /path/to/project
+./ralph-in-a-box.sh /path/to/project
 ```
 
 For API key or Bedrock auth, prefix with the relevant env var (see [Prerequisites](#prerequisites)).
@@ -107,7 +107,7 @@ For API key or Bedrock auth, prefix with the relevant env var (see [Prerequisite
 
 ```bash
 docker build -f Dockerfile.rust -t ralph-in-a-box-rust:latest .
-RALPH_IMAGE=ralph-in-a-box-rust:latest ./run_container.sh /path/to/project DO_TASK_RUST.md
+RALPH_IMAGE=ralph-in-a-box-rust:latest ./ralph-in-a-box.sh /path/to/project DO_TASK_RUST.md
 ```
 
 ### What to expect
@@ -163,7 +163,7 @@ This is informational only — it never blocks the push or creates new tasks. If
 
 ## Configuration
 
-All settings are environment variables, passed before `run_container.sh`:
+All settings are environment variables, passed before `ralph-in-a-box.sh`:
 
 | Variable                     | Default                 | Description                                                                       |
 | ---------------------------- | ----------------------- | --------------------------------------------------------------------------------- |
@@ -177,11 +177,11 @@ All settings are environment variables, passed before `run_container.sh`:
 | `AWS_PROFILE`                | —                       | AWS profile to use (Bedrock mode only)                                            |
 | `AWS_REGION`                 | —                       | AWS region (Bedrock mode only)                                                    |
 
-The phase executor prompt is selected via the second positional argument to `run_container.sh` (defaults to `DO_TASK_PYTHON.md`):
+The phase executor prompt is selected via the second positional argument to `ralph-in-a-box.sh` (defaults to `DO_TASK_PYTHON.md`):
 
 ```bash
-MAX_ITERATIONS=20 MAX_COST=10.00 ./run_container.sh /path/to/project
-MAX_ITERATIONS=20 MAX_COST=10.00 RALPH_IMAGE=ralph-in-a-box-rust:latest ./run_container.sh /path/to/project DO_TASK_RUST.md
+MAX_ITERATIONS=20 MAX_COST=10.00 ./ralph-in-a-box.sh /path/to/project
+MAX_ITERATIONS=20 MAX_COST=10.00 RALPH_IMAGE=ralph-in-a-box-rust:latest ./ralph-in-a-box.sh /path/to/project DO_TASK_RUST.md
 ```
 
 ## Container Isolation
@@ -193,7 +193,7 @@ The Docker boundary is the security perimeter. Claude runs with `--dangerously-s
 | Project workspace       | `/workspace`              | read/write | Always       |
 | `~/.claude` (temp copy) | `/root/.claude`           | read/write | Always       |
 | `~/.aws`                | `/root/.aws`              | read-only  | Bedrock only |
-| `run_ralph.sh`          | `/opt/ralph/run_ralph.sh` | read-only  | Always       |
+| `ralph-loop.sh`          | `/opt/ralph/ralph-loop.sh` | read-only  | Always       |
 | `DO_TASK.md`            | `/opt/ralph/DO_TASK.md`   | read-only  | Always       |
 | `BOOTSTRAP.md`          | `/opt/ralph/BOOTSTRAP.md` | read-only  | Always       |
 | `VERIFY.md`             | `/opt/ralph/VERIFY.md`    | read-only  | Always       |
@@ -230,7 +230,7 @@ This gives you composable, per-project conventions without any ralph-in-a-box co
 
 ## Live Monitoring
 
-When running inside tmux, `run_container.sh` creates a vertical split pane that tails the JSON log stream:
+When running inside tmux, `ralph-in-a-box.sh` creates a vertical split pane that tails the JSON log stream:
 
 ```bash
 tail -f /tmp/ralph_logs/claude_live_<project>.log | jq -R 'fromjson? // .'
@@ -272,7 +272,7 @@ Bootstrap is skipped when `.beads` already exists (whether tasks are open or all
 
 ```bash
 rm -rf /path/to/project/.beads
-./run_container.sh /path/to/project
+./ralph-in-a-box.sh /path/to/project
 ```
 
 ## Test Projects
@@ -294,7 +294,7 @@ Each is an independent git repository. To run a full pipeline test from an `ACTI
 rm -rf test_projects/test_python/.beads
 
 # Run
-./run_container.sh test_projects/test_python
+./ralph-in-a-box.sh test_projects/test_python
 ```
 
 ## Credits

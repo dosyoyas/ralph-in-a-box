@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # Run ralph loop inside Docker container with host-side tmux monitoring
-# Usage: ./run_container.sh /path/to/workspace [do_task_file]
+# Usage: ./ralph-in-a-box.sh /path/to/workspace [do_task_file]
 #
 #   do_task_file  Path to the DO_TASK prompt file to use.
-#                 Relative paths are resolved from the ralph_loop directory.
+#                 Relative paths are resolved from the ralph-loop directory.
 #                 Defaults to DO_TASK_PYTHON.md.
-#                 Example: ./run_container.sh /path/to/project DO_TASK_AGENTS.md
+#                 Example: ./ralph-in-a-box.sh /path/to/project DO_TASK_AGENTS.md
 #
 #   RALPH_IMAGE   Docker image to use (env var). Defaults to ralph-loop:latest.
-#                 Example: RALPH_IMAGE=ralph-loop-rust:latest ./run_container.sh ...
+#                 Example: RALPH_IMAGE=ralph-loop-rust:latest ./ralph-in-a-box.sh ...
 
 set -e
 
@@ -124,7 +124,7 @@ docker run $DOCKER_TTY_FLAGS --rm \
     -e "OTX_KEY_CI=$OTX_KEY_CI" \
     \
     `# Script and task definition - read-only` \
-    -v "$RALPH_DIR/run_ralph.sh:/opt/ralph/run_ralph.sh:ro" \
+    -v "$RALPH_DIR/ralph-loop.sh:/opt/ralph/ralph-loop.sh:ro" \
     -v "$DO_TASK_SOURCE:/opt/ralph/DO_TASK.md:ro" \
     -v "$RALPH_DIR/BOOTSTRAP.md:/opt/ralph/BOOTSTRAP.md:ro" \
     -v "$RALPH_DIR/VERIFY.md:/opt/ralph/VERIFY.md:ro" \
