@@ -41,7 +41,7 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.50
 ENV PATH="/root/.local/bin:${PATH}"
 
 COPY ralph-loop.sh /opt/ralph/ralph-loop.sh
-COPY DO_TASK_RUST.md /opt/ralph/DO_TASK.md
+COPY rust/DO_TASK_RUST.md /opt/ralph/DO_TASK.md
 COPY BOOTSTRAP.md /opt/ralph/BOOTSTRAP.md
 COPY VERIFY.md /opt/ralph/VERIFY.md
 

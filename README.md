@@ -2,6 +2,8 @@
 
 Autonomous software engineering in a container, because YOLO. Give it a plan, walk away, come back to committed code.
 
+![ralph-in-a-box](ralph-in-a-box.jpg)
+
 ralph-in-a-box is a Docker-based implementation of the [Ralph technique](https://ghuntley.com/ralph/) by Geoffrey Huntley. It runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in a bash loop — one task per iteration — with structured task tracking via [beads](https://beads.sh) (a CLI task tracker, invoked as `bd`), a three-phase pipeline (implement → test → review), automatic bootstrapping from a plain-text action plan, and a verification step that checks plan coverage before pushing.
 
 Each feature in your plan becomes an **Epic** (a group of related tasks). Each deliverable goes through three phases as individual tasks, identified by prefix: **`[impl]`** (write code), **`[test]`** (run tests), **`[review]`** (lint, simplify, commit). Claude completes one task per iteration, then exits to reset its context window — task descriptions carry context between iterations, not conversation history.
@@ -88,7 +90,7 @@ The default (no env vars) uses the OAuth session from `~/.claude/`, which is wha
 
 ```bash
 # 1. Build the image (once)
-docker build -f Dockerfile.python -t ralph-in-a-box:latest .
+docker build -f python/Dockerfile.python -t ralph-in-a-box:latest .
 
 # 2. Create your plan in the project root
 cat > /path/to/project/ACTION_PLAN.md << 'EOF'
@@ -106,8 +108,8 @@ For API key or Bedrock auth, prefix with the relevant env var (see [Prerequisite
 ### Rust projects
 
 ```bash
-docker build -f Dockerfile.rust -t ralph-in-a-box-rust:latest .
-RALPH_IMAGE=ralph-in-a-box-rust:latest ./ralph-in-a-box.sh /path/to/project DO_TASK_RUST.md
+docker build -f rust/Dockerfile.rust -t ralph-in-a-box-rust:latest .
+RALPH_IMAGE=ralph-in-a-box-rust:latest ./ralph-in-a-box.sh /path/to/project rust/DO_TASK_RUST.md
 ```
 
 ### What to expect
@@ -177,11 +179,11 @@ All settings are environment variables, passed before `ralph-in-a-box.sh`:
 | `AWS_PROFILE`                | —                       | AWS profile to use (Bedrock mode only)                                            |
 | `AWS_REGION`                 | —                       | AWS region (Bedrock mode only)                                                    |
 
-The phase executor prompt is selected via the second positional argument to `ralph-in-a-box.sh` (defaults to `DO_TASK_PYTHON.md`):
+The phase executor prompt is selected via the second positional argument to `ralph-in-a-box.sh` (defaults to `python/DO_TASK_PYTHON.md`):
 
 ```bash
 MAX_ITERATIONS=20 MAX_COST=10.00 ./ralph-in-a-box.sh /path/to/project
-MAX_ITERATIONS=20 MAX_COST=10.00 RALPH_IMAGE=ralph-in-a-box-rust:latest ./ralph-in-a-box.sh /path/to/project DO_TASK_RUST.md
+MAX_ITERATIONS=20 MAX_COST=10.00 RALPH_IMAGE=ralph-in-a-box-rust:latest ./ralph-in-a-box.sh /path/to/project rust/DO_TASK_RUST.md
 ```
 
 ## Container Isolation

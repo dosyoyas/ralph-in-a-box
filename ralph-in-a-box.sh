@@ -24,7 +24,7 @@ fi
 
 # Resolve DO_TASK file path (absolute or relative to this script)
 RALPH_DIR="$(cd "$(dirname "$0")" && pwd)"
-DO_TASK_ARG="${2:-DO_TASK_PYTHON.md}"
+DO_TASK_ARG="${2:-python/DO_TASK_PYTHON.md}"
 if [[ "$DO_TASK_ARG" == /* ]]; then
     DO_TASK_SOURCE="$DO_TASK_ARG"
 else
