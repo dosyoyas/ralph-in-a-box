@@ -261,7 +261,7 @@ If you prefer to skip the bootstrap phase and create tasks directly. This requir
 
 ```bash
 cd /path/to/your/project
-bd init
+bd init --stealth
 bd create "Epic: your feature" --type epic --priority 0
 bd create "[impl] implement your feature" \
   --parent <epic-id> \

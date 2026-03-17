@@ -12,7 +12,7 @@ After bootstrapping, EXIT IMMEDIATELY. The loop will pick up the first task on t
 
 ```bash
 if [ ! -d ".beads" ]; then
-    bd init
+    bd init --stealth
 fi
 ```
 
