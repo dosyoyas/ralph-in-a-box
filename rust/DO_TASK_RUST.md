@@ -24,7 +24,7 @@ You have all tools available: Bash, Read, Edit, Write, Glob, Grep.
 | Prefix     | On Success            | On Failure              |
 | ---------- | --------------------- | ----------------------- |
 | `[impl]`   | Create `[test]` child | Report blocker          |
-| `[test]`   | Create `[review]`     | Reopen `[impl]` w/error |
+| `[test]`   | Create `[review]`     | Create `[impl] RETRY`   |
 | `[review]` | Commit + close Epic   | Reopen `[test]` w/error |
 
 ---
@@ -86,10 +86,15 @@ Exit immediately. Let the bash loop handle the next iteration.
     cargo build 2>&1
     ```
 
-**Then create a `[test]` task with:**
+**Then:**
 
-- List of files you created or modified
-- Brief summary of what was implemented
+1. Record your modified files:
+    ```bash
+    bd update <id> --notes "FILES MODIFIED: <list>"
+    ```
+2. Check for remaining open `[impl]` siblings in the Epic:
+   - If siblings remain: close this task and exit — do NOT create a `[test]` task
+   - If this is the last `[impl]`: collect `FILES MODIFIED` notes from all siblings, then create a single `[test]` task for the whole Epic with the combined file list and a brief summary
 
 ### [test] — Test
 
@@ -98,11 +103,13 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```bash
     cargo test 2>&1
     ```
-3. Capture full output including tracebacks
+3. Capture output — **truncate before storing:**
+   - On pass: store only the summary line (e.g. `test result: ok. N passed; 0 failed`)
+   - On failure: store only failing test names, `FAILED`/`error` sections, and tracebacks. Truncate to last 100 lines.
 
-**If all tests pass:** create `[review]` task with files list + summary + test results.
+**If all tests pass:** create `[review]` task with files list + summary + test result summary line only.
 
-**If tests fail:** reopen the `[impl]` task with full error output and context. Increment RETRY counter.
+**If tests fail:** create a new `[impl] RETRY` task (do NOT reopen the original `[impl]`). Pass parsed failure output only (no full cargo output). Increment RETRY counter.
 
 ### [review] — Simplify, Lint, and Commit
 
@@ -112,15 +119,16 @@ Exit immediately. Let the bash loop handle the next iteration.
     2. ENHANCE CLARITY — reduce unnecessary complexity and nesting, eliminate redundant abstractions, improve variable and function names
     3. MAINTAIN BALANCE — avoid over-simplification; explicit code is often better than overly compact code
     4. KEEP SCOPE — only touch the files listed in the task description
-    Re-run tests after any changes to confirm nothing broke.
-3. **Lint:**
+    Re-run tests **only if** at least one file was modified during simplification. If no files changed, skip the re-run.
+3. **Lint:** Scope to the crate(s) containing the modified files (use `-p <crate>` if in a workspace):
     ```bash
-    cargo fmt --check 2>&1
-    cargo clippy -- -D warnings 2>&1
+    cargo fmt --all --check 2>&1
+    cargo clippy -p <crate> --all-targets --all-features -- -D warnings -W clippy::cargo -A clippy::multiple_crate_versions 2>&1
     ```
+    > If the project does not use feature flags, omit `--all-features`.
 4. Fix any format or clippy issues found.
     ```bash
-    cargo fmt
+    cargo fmt --all
     ```
     For clippy issues, fix the code directly, do NOT suppress warnings with `#[allow(...)]`.
 5. **Commit:**
@@ -185,19 +193,28 @@ EOF
 )"
 ```
 
-### After [test] failure → Reopen [impl]
+### After [test] failure → Create [impl] RETRY
 
 ```bash
-bd update {IMPL_TASK_ID} --status open
-bd update {IMPL_TASK_ID} --notes "RETRY: {N+1}
+bd create "[impl] RETRY: {ORIGINAL_TITLE}" \
+  --parent {EPIC_ID} \
+  --type task \
+  --priority 0 \
+  --description "$(cat <<'EOF'
+FILES:
+{collected FILES MODIFIED from all [impl] siblings}
 
 TEST FAILURE:
-{failed test names and errors}
+{failed test names and errors only}
 
 COMPILER/TEST OUTPUT:
-{full output}
+{last 100 lines, failures and tracebacks only — no full cargo output}
 
-FIX THE IMPLEMENTATION TO MAKE TESTS PASS."
+FIX THE IMPLEMENTATION TO MAKE TESTS PASS.
+
+RETRY: {N+1}
+EOF
+)"
 ```
 
 ### After [review] failure → Reopen [test]
@@ -249,7 +266,7 @@ Before exiting each iteration:
 ## Session Config
 
 ```
-MAX_RETRIES: 3 (default)
+MAX_RETRIES: 2 (default)
 ```
 
 ---
@@ -259,7 +276,7 @@ MAX_RETRIES: 3 (default)
 1. **ONE PHASE PER ITERATION** — Execute single phase, then exit
 2. **NO SUBAGENTS** — Do the work directly with your own tools
 3. **CONTEXT IN DESCRIPTIONS** — Pass all context via task descriptions
-4. **RETRY LIMITS** — Max 3 retries before creating blocker
+4. **RETRY LIMITS** — Max 2 retries before creating blocker
 5. **NO TEST CHEATING** — Fix implementation, never modify tests to make them pass
 6. **EXIT AFTER TASK** — Let bash loop handle next iteration
 7. **NO PLACEHOLDERS** — Full implementations only

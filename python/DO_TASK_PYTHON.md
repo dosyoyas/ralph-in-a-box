@@ -23,8 +23,8 @@ You have all tools available: Bash, Read, Edit, Write, Glob, Grep.
 
 | Prefix     | On Success            | On Failure              |
 | ---------- | --------------------- | ----------------------- |
-| `[impl]`   | Create `[test]` child | Report blocker          |
-| `[test]`   | Create `[review]`     | Reopen `[impl]` w/error |
+| `[impl]`   | Record files; last sibling creates `[test]` | Report blocker             |
+| `[test]`   | Create `[review]`                           | Create `[impl] RETRY` task |
 | `[review]` | Commit + close Epic   | Reopen `[test]` w/error |
 
 ---
@@ -81,12 +81,19 @@ Exit immediately. Let the bash loop handle the next iteration.
 1. Read the task description to understand what to build
 2. Explore the codebase first — do NOT assume something is not implemented
 3. Implement full production-ready code with type hints on all functions
-4. Run a quick smoke test for the unit you changed
+4. Run static checks on modified files only (do NOT run Docker or the full test suite):
+    ```bash
+    ruff check <modified files>
+    pyrefly check <modified files>   # type checking, if available
+    python3 -c "import <module>"     # verify imports resolve
+    ```
 
-**Then create a `[test]` task with:**
+**Then record modified files and check for siblings:**
 
-- List of files you created or modified
-- Brief summary of what was implemented
+1. Record files: `bd update <id> --notes "FILES MODIFIED: <list>"`
+2. Check for remaining open `[impl]` siblings in the Epic:
+   - **If siblings remain:** close this task and exit — do NOT create a `[test]` task
+   - **If this is the last `[impl]`:** collect `FILES MODIFIED` notes from all siblings, then create a single `[test]` task for the whole Epic
 
 ### [test] — Test
 
@@ -95,11 +102,13 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```bash
     python -m pytest -v 2>&1
     ```
-3. Capture full output including tracebacks
+3. Capture and truncate output:
+   - **On pass:** store only the summary line(s) (e.g. `5 passed in 1.2s`). Discard all other output.
+   - **On failure:** store only failing test names, `FAILED`/`ERROR` sections, and tracebacks. Truncate to last 100 lines. Discard Docker build logs.
 
-**If all tests pass:** create `[review]` task with files list + summary + test results.
+**If all tests pass:** create `[review]` task with files list + summary + test summary line only.
 
-**If tests fail:** reopen the `[impl]` task with full traceback and error context. Increment RETRY counter.
+**If tests fail:** create a new `[impl] RETRY` task (do not reopen a specific `[impl]`) with parsed failure output. Increment RETRY counter.
 
 ### [review] — Simplify, Lint, and Commit
 
@@ -109,20 +118,21 @@ Exit immediately. Let the bash loop handle the next iteration.
     2. ENHANCE CLARITY — reduce unnecessary complexity and nesting, eliminate redundant abstractions, improve variable and function names
     3. MAINTAIN BALANCE — avoid over-simplification; explicit code is often better than overly compact code; avoid nested ternary operators
     4. KEEP SCOPE — only touch the files listed in the task description
-    Re-run tests after any changes to confirm nothing broke.
-3. **Lint:**
+3. **Lint** (scope to files listed in the task description, plus any corresponding test files that exist):
+    - For each modified file (e.g. `src/foo/bar.py`), look for matching test files using Glob: `test_bar.py`, `bar_test.py` anywhere under `tests/` or the project root. Include only those that exist.
     ```bash
-    ruff format --check .
-    ruff check .
-    pyrefly check  # if available
+    ruff format --check <impl_files> <test_files>
+    ruff check <impl_files> <test_files>
+    pyrefly check <impl_files> <test_files>  # if available
     ```
 4. Fix any lint issues found.
-5. **Commit:**
+5. **Re-run tests only if** at least one file was modified during steps 2–4. If no files changed, skip the test re-run and proceed to commit.
+6. **Commit:**
     ```bash
     git add <files>
     git commit -m "type(scope): description"
     ```
-6. Check if all sibling tasks under the Epic are closed.
+7. Check if all sibling tasks under the Epic are closed.
    If no: leave the Epic open.
    If yes: close the Epic, then push to remote:
     ```bash
@@ -139,16 +149,23 @@ Exit immediately. Let the bash loop handle the next iteration.
 
 ## Task Creation Templates
 
-### After [impl] success → Create [test]
+### After [impl] success → Record files, then check siblings
 
 ```bash
-bd create "[test] Test: {ORIGINAL_TITLE}" \
+# Step 1: Record modified files on the current task
+bd update {IMPL_TASK_ID} --notes "FILES MODIFIED: {list of files}"
+
+# Step 2a: If open [impl] siblings remain — close and exit (no [test] task)
+bd close {IMPL_TASK_ID} --reason "Implementation complete; awaiting sibling [impl] tasks"
+
+# Step 2b: If this is the last [impl] — collect all FILES MODIFIED notes, then create [test]
+bd create "[test] Test: {EPIC_TITLE}" \
   --parent {EPIC_ID} \
   --type task \
   --priority 0 \
   --description "$(cat <<'EOF'
 FILES MODIFIED:
-{list of files}
+{combined list from all [impl] siblings}
 
 IMPLEMENTATION SUMMARY:
 {brief description}
@@ -156,6 +173,7 @@ IMPLEMENTATION SUMMARY:
 RETRY: 0
 EOF
 )"
+bd close {IMPL_TASK_ID} --reason "Implementation complete; [test] task created"
 ```
 
 ### After [test] success → Create [review]
@@ -179,19 +197,29 @@ EOF
 )"
 ```
 
-### After [test] failure → Reopen [impl]
+### After [test] failure → Create [impl] RETRY
 
 ```bash
-bd update {IMPL_TASK_ID} --status open
-bd update {IMPL_TASK_ID} --notes "RETRY: {N+1}
+bd create "[impl] RETRY: {EPIC_TITLE}" \
+  --parent {EPIC_ID} \
+  --type task \
+  --priority 0 \
+  --description "$(cat <<'EOF'
+RETRY: {N+1}
+
+FILES MODIFIED:
+{list from [test] task description}
 
 TEST FAILURE:
-{failed test names and errors}
+{failed test names and errors — no Docker logs}
 
 TRACEBACK:
-{full traceback}
+{tracebacks, truncated to 100 lines}
 
-FIX THE IMPLEMENTATION TO MAKE TESTS PASS."
+FIX THE IMPLEMENTATION TO MAKE TESTS PASS.
+EOF
+)"
+bd close {TEST_TASK_ID} --reason "Tests failed; [impl] RETRY task created"
 ```
 
 ### After [review] failure → Reopen [test]
@@ -243,7 +271,7 @@ Before exiting each iteration:
 ## Session Config
 
 ```
-MAX_RETRIES: 3 (default)
+MAX_RETRIES: 2 (default)
 ```
 
 ---
@@ -253,7 +281,7 @@ MAX_RETRIES: 3 (default)
 1. **ONE PHASE PER ITERATION** — Execute single phase, then exit
 2. **NO SUBAGENTS** — Do the work directly with your own tools
 3. **CONTEXT IN DESCRIPTIONS** — Pass all context via task descriptions
-4. **RETRY LIMITS** — Max 3 retries before creating blocker
+4. **RETRY LIMITS** — Max 2 retries before creating blocker
 5. **NO TEST CHEATING** — Fix implementation, never modify tests to make them pass
 6. **EXIT AFTER TASK** — Let bash loop handle next iteration
 7. **NO PLACEHOLDERS** — Full implementations only
