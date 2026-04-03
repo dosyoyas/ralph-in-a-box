@@ -21,8 +21,8 @@ RUN mkdir -p -m 700 /root/.ssh \
     && ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts \
     && chmod 600 /root/.ssh/known_hosts
 
-# Install beads CLI via npm — pin to 0.55.4 (0.56+ dropped embedded Dolt mode)
-RUN npm install -g @beads/bd@0.55.4 \
+# Install beads CLI via npm
+RUN npm install -g @beads/bd@0.63.3 \
     && ln -sf /usr/local/bin/bd /usr/local/bin/beads \
     && bd --version
 
