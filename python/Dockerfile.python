@@ -22,7 +22,7 @@ RUN mkdir -p -m 700 /root/.ssh \
     && chmod 600 /root/.ssh/known_hosts
 
 # Install beads CLI via npm
-RUN npm install -g @beads/bd@0.63.3 \
+RUN npm install -g @beads/bd \
     && ln -sf /usr/local/bin/bd /usr/local/bin/beads \
     && bd --version
 
@@ -32,8 +32,15 @@ RUN pip3 install --break-system-packages \
     ruff \
     pyrefly
 
-# Install Claude Code CLI — pin to 2.1.50 to match Rust image
-RUN npm install -g @anthropic-ai/claude-code@2.1.50
+# Install agent CLI (claude, cursor, or codex)
+ARG AGENT=claude
+RUN if [ "$AGENT" = "claude" ]; then \
+        npm install -g @anthropic-ai/claude-code@2.1.50; \
+    elif [ "$AGENT" = "cursor" ]; then \
+        curl https://cursor.com/install -fsS | bash; \
+    elif [ "$AGENT" = "codex" ]; then \
+        npm install -g @openai/codex @fission-ai/openspec@latest; \
+    fi
 
 ENV PATH="/root/.local/bin:${PATH}"
 

@@ -1,12 +1,15 @@
 #!/bin/bash
 
-# Shell script to run Claude Code in headless mode with beads task tracking
+# Shell script to run an AI agent (claude, cursor, or codex) in headless mode with beads task tracking
 # Each iteration = ONE phase of a feature pipeline, then exit to reset context
 
 CHECK_INTERVAL=5
 
+# Agent selection (claude, cursor, or codex)
+RALPH_AGENT="${RALPH_AGENT:-claude}"
+
 # Configuration (can be overridden via environment)
-CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+AGENT_CONFIG_DIR="${AGENT_CONFIG_DIR:-$HOME/.claude}"
 DO_TASK_FILE="${DO_TASK_FILE:-DO_TASK_PYTHON.md}"
 BOOTSTRAP_FILE="${BOOTSTRAP_FILE:-/opt/ralph/BOOTSTRAP.md}"
 VERIFY_FILE="${VERIFY_FILE:-/opt/ralph/VERIFY.md}"
@@ -18,9 +21,10 @@ MAX_COST="${MAX_COST:-100.00}"
 # Use shared log directory and project name (set by ralph-in-a-box.sh) or fallback
 LOG_DIR="${RALPH_LOG_DIR:-/tmp}"
 PROJECT_NAME="${RALPH_PROJECT_NAME:-$(basename "$(pwd)")}"
-LOG_FILE="${LOG_DIR}/claude_live_${PROJECT_NAME}.log"
-COST_FILE="${LOG_DIR}/claude_cost_${PROJECT_NAME}.txt"
-ITERATION_FILE="${LOG_DIR}/claude_iteration_${PROJECT_NAME}.txt"
+AGENT_PREFIX="${RALPH_AGENT}"
+LOG_FILE="${LOG_DIR}/${AGENT_PREFIX}_live_${PROJECT_NAME}.log"
+COST_FILE="${LOG_DIR}/${AGENT_PREFIX}_cost_${PROJECT_NAME}.txt"
+ITERATION_FILE="${LOG_DIR}/${AGENT_PREFIX}_iteration_${PROJECT_NAME}.txt"
 TOTAL_COST=0
 ITERATION=0
 
@@ -45,12 +49,23 @@ parse_stream() {
             TEXT=$(echo "$line" | jq -r '.message.content[]? | select(.type=="text") | .text' 2>/dev/null)
             [ -n "$TEXT" ] && echo "$TEXT"
             ;;
+        tool_call)
+            # Cursor Agent — dedicated tool_call events
+            SUBTYPE=$(echo "$line" | jq -r '.subtype // empty' 2>/dev/null)
+            if [ "$SUBTYPE" = "started" ]; then
+                TOOL_NAME=$(echo "$line" | jq -r '.tool_call | keys[0] // empty' 2>/dev/null)
+                [ -n "$TOOL_NAME" ] && echo "[TOOL] $TOOL_NAME"
+            fi
+            ;;
         result)
-            COST=$(echo "$line" | jq -r '.total_cost_usd // 0' 2>/dev/null)
-            if [ -n "$COST" ] && [ "$COST" != "null" ] && [ "$COST" != "0" ]; then
-                TOTAL_COST=$(echo "scale=6; $TOTAL_COST + $COST" | bc 2>/dev/null || echo "$TOTAL_COST")
-                printf "[COST] This run: \$%.2f | Total: \$%.2f\n" "$COST" "$TOTAL_COST"
-                echo "$TOTAL_COST" >"$COST_FILE"
+            # Cost tracking — Claude only
+            if [ "$RALPH_AGENT" = "claude" ]; then
+                COST=$(echo "$line" | jq -r '.total_cost_usd // 0' 2>/dev/null)
+                if [ -n "$COST" ] && [ "$COST" != "null" ] && [ "$COST" != "0" ]; then
+                    TOTAL_COST=$(echo "scale=6; $TOTAL_COST + $COST" | bc 2>/dev/null || echo "$TOTAL_COST")
+                    printf "[COST] This run: \$%.2f | Total: \$%.2f\n" "$COST" "$TOTAL_COST"
+                    echo "$TOTAL_COST" >"$COST_FILE"
+                fi
             fi
             ;;
         content_block_delta)
@@ -61,14 +76,47 @@ parse_stream() {
     done
 }
 
+# Invoke the selected agent with a prompt file
+invoke_agent() {
+    local prompt_file="$1"
+    case "$RALPH_AGENT" in
+    claude)
+        claude -p "$(cat "$prompt_file")" \
+            --add-dir "$AGENT_CONFIG_DIR" \
+            --dangerously-skip-permissions \
+            --output-format stream-json \
+            --verbose \
+            2>&1 | parse_stream
+        ;;
+    cursor)
+        agent -p "$(cat "$prompt_file")" \
+            --force \
+            --output-format stream-json \
+            --stream-partial-output \
+            2>&1 | parse_stream
+        ;;
+    codex)
+        codex -p "$(cat "$prompt_file")" \
+            --full-auto \
+            --output-format stream-json \
+            2>&1 | parse_stream
+        ;;
+    esac
+}
+
 # Initialize log files (monitoring is handled by host via ralph-in-a-box.sh)
 mkdir -p "$LOG_DIR"
 >"$LOG_FILE"
 echo "0" >"$COST_FILE"
 echo "0" >"$ITERATION_FILE"
+echo "Agent: $RALPH_AGENT"
 echo "Logs: $LOG_FILE"
-echo "Limits: MAX_ITERATIONS=$MAX_ITERATIONS, MAX_COST=\$$MAX_COST"
-echo "Starting Claude Code automation loop with beads..."
+if [ "$RALPH_AGENT" = "claude" ]; then
+    echo "Limits: MAX_ITERATIONS=$MAX_ITERATIONS, MAX_COST=\$$MAX_COST"
+else
+    echo "Limits: MAX_ITERATIONS=$MAX_ITERATIONS"
+fi
+echo "Starting $RALPH_AGENT automation loop with beads..."
 
 while true; do
     # Load accumulated cost and iteration count
@@ -92,22 +140,28 @@ while true; do
         exit 3
     fi
 
-    # Check cost limit
-    if (( $(echo "$TOTAL_COST > $MAX_COST" | bc -l 2>/dev/null || echo 0) )); then
-        echo ""
-        echo "════════════════════════════════════════"
-        echo "⚠️  MAX_COST (\$$MAX_COST) EXCEEDED"
-        echo "════════════════════════════════════════"
-        printf "Total cost: \$%.2f. Completed %d iterations.\n" "$TOTAL_COST" "$ITERATION"
-        echo ""
-        echo "Remaining tasks:"
-        bd list
-        exit 4
+    # Check cost limit (Claude only — other agents don't report cost)
+    if [ "$RALPH_AGENT" = "claude" ]; then
+        if (( $(echo "$TOTAL_COST > $MAX_COST" | bc -l 2>/dev/null || echo 0) )); then
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "⚠️  MAX_COST (\$$MAX_COST) EXCEEDED"
+            echo "════════════════════════════════════════"
+            printf "Total cost: \$%.2f. Completed %d iterations.\n" "$TOTAL_COST" "$ITERATION"
+            echo ""
+            echo "Remaining tasks:"
+            bd list
+            exit 4
+        fi
     fi
 
     echo ""
     echo "═══════════════════════════════════════════════════════════"
-    printf "ITERATION %d/%d | Cost: \$%.2f/\$%.2f\n" "$ITERATION" "$MAX_ITERATIONS" "$TOTAL_COST" "$MAX_COST"
+    if [ "$RALPH_AGENT" = "claude" ]; then
+        printf "ITERATION %d/%d | Cost: \$%.2f/\$%.2f | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$TOTAL_COST" "$MAX_COST" "$RALPH_AGENT"
+    else
+        printf "ITERATION %d/%d | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$RALPH_AGENT"
+    fi
     echo "═══════════════════════════════════════════════════════════"
 
     # Task detection: get counts (fallback to empty if beads not initialized)
@@ -130,20 +184,15 @@ while true; do
             >"$LOG_FILE"
             echo "=== Bootstrap $(date) ===" >>"$LOG_FILE"
 
-            claude -p "$(cat "$BOOTSTRAP_FILE")" \
-                --add-dir "$CLAUDE_CONFIG_DIR" \
-                --dangerously-skip-permissions \
-                --output-format stream-json \
-                --verbose \
-                2>&1 | parse_stream
+            invoke_agent "$BOOTSTRAP_FILE"
 
-            CLAUDE_EXIT_CODE=$?
-            if [ $CLAUDE_EXIT_CODE -ne 0 ]; then
+            AGENT_EXIT_CODE=$?
+            if [ $AGENT_EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo "════════════════════════════════════════"
-                echo "❌ BOOTSTRAP ERROR (exit code: $CLAUDE_EXIT_CODE)"
+                echo "❌ BOOTSTRAP ERROR (exit code: $AGENT_EXIT_CODE)"
                 echo "════════════════════════════════════════"
-                exit $CLAUDE_EXIT_CODE
+                exit $AGENT_EXIT_CODE
             fi
 
             sleep $CHECK_INTERVAL
@@ -176,12 +225,7 @@ while true; do
             >"$LOG_FILE"
             echo "=== Verify $(date) ===" >>"$LOG_FILE"
 
-            claude -p "$(cat "$VERIFY_FILE")" \
-                --add-dir "$CLAUDE_CONFIG_DIR" \
-                --dangerously-skip-permissions \
-                --output-format stream-json \
-                --verbose \
-                2>&1 | parse_stream
+            invoke_agent "$VERIFY_FILE"
 
             echo ""
         fi
@@ -190,12 +234,10 @@ while true; do
         if git remote | grep -q .; then
             echo "1. Syncing with git..."
             git pull --rebase
-            bd sync
             echo "2. Pushing commits to remote..."
             git push
         else
-            echo "No git remote configured — syncing without push"
-            bd sync
+            echo "No git remote configured — skipping push"
         fi
         echo "Verifying status..."
         git status
@@ -228,25 +270,20 @@ while true; do
     >"$LOG_FILE"
     echo "=== Starting task $(date) ===" >>"$LOG_FILE"
 
-    claude -p "$(cat "$DO_TASK_FILE")" \
-        --add-dir "$CLAUDE_CONFIG_DIR" \
-        --dangerously-skip-permissions \
-        --output-format stream-json \
-        --verbose \
-        2>&1 | parse_stream
+    invoke_agent "$DO_TASK_FILE"
 
-    CLAUDE_EXIT_CODE=$?
+    AGENT_EXIT_CODE=$?
 
     echo "---"
 
-    if [ $CLAUDE_EXIT_CODE -ne 0 ]; then
+    if [ $AGENT_EXIT_CODE -ne 0 ]; then
         echo ""
         echo "════════════════════════════════════════"
-        echo "❌ CLAUDE ERROR (exit code: $CLAUDE_EXIT_CODE)"
+        echo "❌ AGENT ERROR (exit code: $AGENT_EXIT_CODE)"
         echo "════════════════════════════════════════"
         echo ""
         bd list
-        exit $CLAUDE_EXIT_CODE
+        exit $AGENT_EXIT_CODE
     fi
 
     sleep $CHECK_INTERVAL

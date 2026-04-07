@@ -36,21 +36,39 @@ if [ ! -f "$DO_TASK_SOURCE" ]; then
     exit 1
 fi
 
+# Agent selection
+RALPH_AGENT="${RALPH_AGENT:-claude}"
+
 # Shared log directory between host and container
 LOG_DIR="/tmp/ralph_logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/claude_live_${PROJECT_NAME}.log"
+LOG_FILE="$LOG_DIR/${RALPH_AGENT}_live_${PROJECT_NAME}.log"
 
-# Create writable temp copy of ~/.claude for session data
-CLAUDE_CONFIG_TMP=$(mktemp -d /tmp/ralph-claude-XXXXXX)
-cp -rp "$HOME/.claude/." "$CLAUDE_CONFIG_TMP/" 2>/dev/null || true
-[ -f "$HOME/.claude.json" ] && cp "$HOME/.claude.json" "$CLAUDE_CONFIG_TMP/.claude.json" 2>/dev/null || true
+# Create writable temp copy of agent config directory
+case "$RALPH_AGENT" in
+claude)
+    AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-claude-XXXXXX)
+    cp -rp "$HOME/.claude/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    [ -f "$HOME/.claude.json" ] && cp "$HOME/.claude.json" "$AGENT_CONFIG_TMP/.claude.json" 2>/dev/null || true
+    AGENT_CONFIG_DST="/root/.claude"
+    ;;
+cursor)
+    AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-cursor-XXXXXX)
+    cp -rp "$HOME/.cursor/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    AGENT_CONFIG_DST="/root/.cursor"
+    ;;
+codex)
+    AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-codex-XXXXXX)
+    cp -rp "$HOME/.codex/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    AGENT_CONFIG_DST="/root/.codex"
+    ;;
+esac
 
 # Cleanup on exit
 MONITOR_PANE=""
 cleanup() {
     [ -n "$MONITOR_PANE" ] && tmux kill-pane -t "$MONITOR_PANE" 2>/dev/null || true
-    rm -rf "$CLAUDE_CONFIG_TMP"
+    rm -rf "$AGENT_CONFIG_TMP"
 }
 trap cleanup EXIT
 
@@ -66,28 +84,40 @@ else
     echo "You can monitor logs manually with: tail -f $LOG_FILE"
 fi
 
-# Build auth arguments based on environment
+# Build auth arguments based on agent and environment
 RALPH_AUTH_ARGS=()
-if [ "${CLAUDE_CODE_USE_BEDROCK}" = "1" ]; then
-    RALPH_AUTH_ARGS+=(
-        -v "$HOME/.aws:/root/.aws:ro"
-        -e "AWS_REGION=${AWS_REGION}"
-        -e "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}"
-        -e "AWS_PROFILE=${AWS_PROFILE}"
-        -e "CLAUDE_CODE_USE_BEDROCK=1"
-    )
-    AUTH_MODE="Bedrock"
-elif [ -n "$ANTHROPIC_API_KEY" ]; then
-    RALPH_AUTH_ARGS+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
-    AUTH_MODE="API key"
-else
-    AUTH_MODE="Subscription (OAuth)"
-fi
-# Model overrides (work with any auth mode)
-[ -n "$ANTHROPIC_MODEL" ] && RALPH_AUTH_ARGS+=(-e "ANTHROPIC_MODEL=$ANTHROPIC_MODEL")
-[ -n "$ANTHROPIC_SMALL_FAST_MODEL" ] && RALPH_AUTH_ARGS+=(-e "ANTHROPIC_SMALL_FAST_MODEL=$ANTHROPIC_SMALL_FAST_MODEL")
+case "$RALPH_AGENT" in
+claude)
+    if [ "${CLAUDE_CODE_USE_BEDROCK}" = "1" ]; then
+        RALPH_AUTH_ARGS+=(
+            -v "$HOME/.aws:/root/.aws:ro"
+            -e "AWS_REGION=${AWS_REGION}"
+            -e "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}"
+            -e "AWS_PROFILE=${AWS_PROFILE}"
+            -e "CLAUDE_CODE_USE_BEDROCK=1"
+        )
+        AUTH_MODE="Bedrock"
+    elif [ -n "$ANTHROPIC_API_KEY" ]; then
+        RALPH_AUTH_ARGS+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+        AUTH_MODE="API key"
+    else
+        AUTH_MODE="Subscription (OAuth)"
+    fi
+    [ -n "$ANTHROPIC_MODEL" ] && RALPH_AUTH_ARGS+=(-e "ANTHROPIC_MODEL=$ANTHROPIC_MODEL")
+    [ -n "$ANTHROPIC_SMALL_FAST_MODEL" ] && RALPH_AUTH_ARGS+=(-e "ANTHROPIC_SMALL_FAST_MODEL=$ANTHROPIC_SMALL_FAST_MODEL")
+    ;;
+cursor)
+    RALPH_AUTH_ARGS+=(-e "CURSOR_API_KEY=$CURSOR_API_KEY")
+    AUTH_MODE="Cursor API key"
+    ;;
+codex)
+    RALPH_AUTH_ARGS+=(-e "OPENAI_API_KEY=$OPENAI_API_KEY")
+    AUTH_MODE="OpenAI API key"
+    ;;
+esac
 
 echo "=== Ralph Container Launch ==="
+echo "Agent:      $RALPH_AGENT"
 echo "Workspace:  $WORKSPACE"
 echo "DO_TASK:    $DO_TASK_SOURCE"
 echo "Auth:       $AUTH_MODE"
@@ -104,8 +134,8 @@ docker run $DOCKER_TTY_FLAGS --rm \
     `# Workspace - read/write` \
     -v "$WORKSPACE:/workspace" \
     \
-    `# Claude config directory (writable temp copy — host config is never modified)` \
-    -v "$CLAUDE_CONFIG_TMP:/root/.claude" \
+    `# Agent config directory (writable temp copy — host config is never modified)` \
+    -v "$AGENT_CONFIG_TMP:$AGENT_CONFIG_DST" \
     \
     `# Shared log directory for host monitoring` \
     -v "$LOG_DIR:$LOG_DIR" \
@@ -114,7 +144,8 @@ docker run $DOCKER_TTY_FLAGS --rm \
     "${RALPH_AUTH_ARGS[@]}" \
     \
     `# Ralph script config paths (inside container)` \
-    -e "CLAUDE_CONFIG_DIR=/root/.claude" \
+    -e "RALPH_AGENT=$RALPH_AGENT" \
+    -e "AGENT_CONFIG_DIR=$AGENT_CONFIG_DST" \
     -e "DO_TASK_FILE=/opt/ralph/DO_TASK.md" \
     -e "BOOTSTRAP_FILE=/opt/ralph/BOOTSTRAP.md" \
     -e "VERIFY_FILE=/opt/ralph/VERIFY.md" \
