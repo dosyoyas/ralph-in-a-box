@@ -104,6 +104,13 @@ invoke_agent() {
     esac
 }
 
+# Track elapsed time
+START_TIME=$(date +%s)
+elapsed() {
+    local secs=$(( $(date +%s) - START_TIME ))
+    printf "%dm%02ds" $((secs / 60)) $((secs % 60))
+}
+
 # Initialize log files (monitoring is handled by host via ralph-in-a-box.sh)
 mkdir -p "$LOG_DIR"
 >"$LOG_FILE"
@@ -133,7 +140,7 @@ while true; do
         echo "════════════════════════════════════════"
         echo "⚠️  MAX_ITERATIONS ($MAX_ITERATIONS) REACHED"
         echo "════════════════════════════════════════"
-        printf "Completed %d iterations. Total cost: \$%.2f\n" $((ITERATION - 1)) "$TOTAL_COST"
+        printf "Completed %d iterations in %s. Total cost: \$%.2f\n" $((ITERATION - 1)) "$(elapsed)" "$TOTAL_COST"
         echo ""
         echo "Remaining tasks:"
         bd list
@@ -147,7 +154,7 @@ while true; do
             echo "════════════════════════════════════════"
             echo "⚠️  MAX_COST (\$$MAX_COST) EXCEEDED"
             echo "════════════════════════════════════════"
-            printf "Total cost: \$%.2f. Completed %d iterations.\n" "$TOTAL_COST" "$ITERATION"
+            printf "Total cost: \$%.2f. Completed %d iterations in %s.\n" "$TOTAL_COST" "$ITERATION" "$(elapsed)"
             echo ""
             echo "Remaining tasks:"
             bd list
@@ -158,9 +165,9 @@ while true; do
     echo ""
     echo "═══════════════════════════════════════════════════════════"
     if [ "$RALPH_AGENT" = "claude" ]; then
-        printf "ITERATION %d/%d | Cost: \$%.2f/\$%.2f | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$TOTAL_COST" "$MAX_COST" "$RALPH_AGENT"
+        printf "ITERATION %d/%d | Cost: \$%.2f/\$%.2f | %s | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$TOTAL_COST" "$MAX_COST" "$(elapsed)" "$RALPH_AGENT"
     else
-        printf "ITERATION %d/%d | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$RALPH_AGENT"
+        printf "ITERATION %d/%d | %s | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$(elapsed)" "$RALPH_AGENT"
     fi
     echo "═══════════════════════════════════════════════════════════"
 
@@ -245,7 +252,7 @@ while true; do
         echo "════════════════════════════════════════"
         echo "✅ WORK SESSION COMPLETE"
         echo "════════════════════════════════════════"
-        printf "Iterations: %d | Total cost: \$%.2f\n" "$ITERATION" "$TOTAL_COST"
+        printf "Iterations: %d | Total cost: \$%.2f | Elapsed: %s\n" "$ITERATION" "$TOTAL_COST" "$(elapsed)"
         exit 0
     fi
 

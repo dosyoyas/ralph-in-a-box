@@ -271,3 +271,8 @@ Implementation of the Ralph technique by Geoffrey Huntley:
 
 > _"Ralph is monolithic. Ralph works autonomously in a single repository as a single process that performs one task per loop."_
 > — Geoffrey Huntley
+
+## Further Reading
+
+- [Don't waste your backpressure](https://banay.me/dont-waste-your-backpressure/) — why constraining AI agents improves output quality
+- [Introducing Beads: a coding agent memory system](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a) — the design behind beads
