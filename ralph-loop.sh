@@ -96,9 +96,9 @@ invoke_agent() {
             2>&1 | parse_stream
         ;;
     codex)
-        codex -p "$(cat "$prompt_file")" \
-            --full-auto \
-            --output-format stream-json \
+        codex exec "$(cat "$prompt_file")" \
+            --dangerously-bypass-approvals-and-sandbox \
+            --json \
             2>&1 | parse_stream
         ;;
     esac
