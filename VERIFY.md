@@ -1,5 +1,7 @@
 # VERIFY: Coverage Report
 
+**Before anything else:** if `AGENTS.md` exists in the workspace root, read it and follow its instructions for the entire session.
+
 All tasks are completed. Before the session ends, generate a coverage report comparing `ACTION_PLAN.md` against the work done.
 
 ## Instructions

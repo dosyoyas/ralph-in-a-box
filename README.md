@@ -215,13 +215,11 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 
 ## Project Conventions
 
-Each agent reads convention files from your project. For Claude Code, this is `CLAUDE.md`; other agents use their own equivalents. Use these to set coding standards, approved libraries, and architectural rules that apply to every iteration.
-
-For teams, a shared convention library works well:
+All prompts instruct the agent to read `AGENTS.md` from the project root before starting work. Use this file to set coding standards, approved libraries, and architectural rules that apply to every iteration — regardless of which agent backend is running.
 
 ```
 myproject/
-  CLAUDE.md         # "Read all files in specs/"
+  AGENTS.md         # "Read all files in specs/"
   specs/
     testing.md → ~/coding-specs/testing.md
     auth.md    → ~/coding-specs/auth.md

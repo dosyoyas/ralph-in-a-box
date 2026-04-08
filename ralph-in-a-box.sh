@@ -137,6 +137,10 @@ docker run $DOCKER_TTY_FLAGS --rm \
     `# Agent config directory (writable temp copy — host config is never modified)` \
     -v "$AGENT_CONFIG_TMP:$AGENT_CONFIG_DST" \
     \
+    `# Git config and SSH keys for push (read-only)` \
+    -v "$HOME/.gitconfig:/root/.gitconfig:ro" \
+    -v "$HOME/.ssh:/root/.ssh:ro" \
+    \
     `# Shared log directory for host monitoring` \
     -v "$LOG_DIR:$LOG_DIR" \
     \

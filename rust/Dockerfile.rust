@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
-# Trust github.com SSH key for git over SSH
+# Trust common git hosts SSH keys
 RUN mkdir -p -m 700 /root/.ssh \
-    && ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts \
+    && ssh-keyscan -t ed25519 github.com bitbucket.org gitlab.com >> /root/.ssh/known_hosts \
     && chmod 600 /root/.ssh/known_hosts
 
 # Install beads CLI via npm
