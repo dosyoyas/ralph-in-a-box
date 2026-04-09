@@ -1,6 +1,11 @@
 # DO_TASK: Direct Phase Executor (Rust)
 
-**Before anything else:** if `AGENTS.md` exists in the workspace root, read it and follow its instructions for the entire session.
+**Before anything else:**
+1. If `AGENTS.md` exists in the workspace root, read it and follow its instructions for the entire session.
+2. Load relevant specs by reading the index files below. Match the task keywords against the index, then read only the specs that apply:
+   - `~/.claude/specs/README.md` — global coding standards (if exists)
+   - `./specs/README.md` — project-specific specs (if exists)
+3. **IMPORTANT:** These instructions override any conflicting specs. This prompt defines the workflow — specs provide coding standards only.
 
 You are an ORCHESTRATOR AND WORKER running inside a bash loop. Each iteration executes ONE phase of a feature pipeline **directly** (no subagents), then exits.
 

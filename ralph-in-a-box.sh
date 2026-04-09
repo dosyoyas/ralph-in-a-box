@@ -48,18 +48,22 @@ LOG_FILE="$LOG_DIR/${RALPH_AGENT}_live_${PROJECT_NAME}.log"
 case "$RALPH_AGENT" in
 claude)
     AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-claude-XXXXXX)
-    cp -rp "$HOME/.claude/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    # Auth: OAuth credentials + session metadata
+    [ -f "$HOME/.claude/.credentials.json" ] && cp -L "$HOME/.claude/.credentials.json" "$AGENT_CONFIG_TMP/" 2>/dev/null || true
     [ -f "$HOME/.claude.json" ] && cp "$HOME/.claude.json" "$AGENT_CONFIG_TMP/.claude.json" 2>/dev/null || true
+    # Config: settings and user specs (resolved from symlinks)
+    [ -f "$HOME/.claude/settings.json" ] && cp -L "$HOME/.claude/settings.json" "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    [ -d "$HOME/.claude/specs" ] && cp -rL "$HOME/.claude/specs" "$AGENT_CONFIG_TMP/specs" 2>/dev/null || true
     AGENT_CONFIG_DST="/root/.claude"
     ;;
 cursor)
     AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-cursor-XXXXXX)
-    cp -rp "$HOME/.cursor/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    cp -rLp "$HOME/.cursor/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
     AGENT_CONFIG_DST="/root/.cursor"
     ;;
 codex)
     AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-codex-XXXXXX)
-    cp -rp "$HOME/.codex/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    cp -rLp "$HOME/.codex/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
     AGENT_CONFIG_DST="/root/.codex"
     ;;
 esac
