@@ -244,6 +244,20 @@ bd create "BLOCKED: {Epic title} - {failure reason}" \
 bd close {EPIC_ID} --reason "Blocked after $MAX_RETRIES retries"
 ```
 
+Then append to `BLOCKERS.md` in the workspace root (create if it doesn't exist):
+
+```markdown
+## BLOCKED: {Epic title} - {failure reason}
+- **Task:** {task ID} — {task title}
+- **Phase:** {[impl] | [test] | [review]}
+- **Retries:** {N}/{MAX_RETRIES}
+- **Error:** {concise error summary}
+- **What was tried:** {brief description of each retry attempt}
+- **What is needed:** {what input, decision, or fix is required to unblock}
+- **Impacted tasks:** {list any tasks that depend on this one, or "none"}
+- **Date:** {YYYY-MM-DD}
+```
+
 ---
 
 ## Retry Logic
