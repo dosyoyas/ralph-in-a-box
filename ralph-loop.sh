@@ -17,6 +17,7 @@ VERIFY_FILE="${VERIFY_FILE:-/opt/ralph/VERIFY.md}"
 # Safety limits (can be overridden via environment)
 MAX_ITERATIONS="${MAX_ITERATIONS:-50}"
 MAX_COST="${MAX_COST:-100.00}"
+AGENT_TIMEOUT="${AGENT_TIMEOUT:-600}"  # Kill agent after N seconds of no output (default: 10min)
 
 # Use shared log directory and project name (set by ralph-in-a-box.sh) or fallback
 LOG_DIR="${RALPH_LOG_DIR:-/tmp}"
@@ -36,10 +37,14 @@ cleanup() {
 }
 trap cleanup EXIT SIGTERM SIGINT
 
+# Timestamp file for watchdog (tracks last output from agent)
+HEARTBEAT_FILE=$(mktemp /tmp/ralph-heartbeat-XXXXXX)
+
 # Parse stream-json: full output to log file, summaries to console
 parse_stream() {
     while IFS= read -r line; do
         echo "$line" >>"$LOG_FILE"
+        date +%s >"$HEARTBEAT_FILE"
 
         TYPE=$(echo "$line" | jq -r '.type // empty' 2>/dev/null)
         case "$TYPE" in
@@ -76,32 +81,70 @@ parse_stream() {
     done
 }
 
+# Watchdog: kills agent PID if no output for AGENT_TIMEOUT seconds
+start_watchdog() {
+    local agent_pid=$1
+    (
+        while kill -0 "$agent_pid" 2>/dev/null; do
+            sleep 30
+            local last_beat=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo "0")
+            local now=$(date +%s)
+            local silent=$(( now - last_beat ))
+            if [ "$silent" -ge "$AGENT_TIMEOUT" ]; then
+                echo ""
+                echo "⚠️  WATCHDOG: Agent silent for ${silent}s (timeout: ${AGENT_TIMEOUT}s) — killing"
+                kill "$agent_pid" 2>/dev/null
+                sleep 2
+                kill -9 "$agent_pid" 2>/dev/null
+                break
+            fi
+        done
+    ) &
+    echo $!
+}
+
 # Invoke the selected agent with a prompt file
+# Agent runs in background; watchdog kills it if no output for AGENT_TIMEOUT seconds.
+# Exit code is captured from the agent process (not parse_stream).
 invoke_agent() {
     local prompt_file="$1"
-    case "$RALPH_AGENT" in
-    claude)
-        claude -p "$(cat "$prompt_file")" \
-            --add-dir "$AGENT_CONFIG_DIR" \
-            --dangerously-skip-permissions \
-            --output-format stream-json \
-            --verbose \
-            2>&1 | parse_stream
-        ;;
-    cursor)
-        agent -p "$(cat "$prompt_file")" \
-            --force \
-            --output-format stream-json \
-            --stream-partial-output \
-            2>&1 | parse_stream
-        ;;
-    codex)
-        codex exec "$(cat "$prompt_file")" \
-            --dangerously-bypass-approvals-and-sandbox \
-            --json \
-            2>&1 | parse_stream
-        ;;
-    esac
+    local rc_file=$(mktemp /tmp/ralph-rc-XXXXXX)
+    date +%s >"$HEARTBEAT_FILE"
+
+    # Run agent in background, capture its exit code to a file
+    (
+        case "$RALPH_AGENT" in
+        claude)
+            claude -p "$(cat "$prompt_file")" \
+                --add-dir "$AGENT_CONFIG_DIR" \
+                --dangerously-skip-permissions \
+                --output-format stream-json \
+                --verbose
+            ;;
+        cursor)
+            agent -p "$(cat "$prompt_file")" \
+                --force \
+                --output-format stream-json \
+                --stream-partial-output
+            ;;
+        codex)
+            codex exec "$(cat "$prompt_file")" \
+                --dangerously-bypass-approvals-and-sandbox \
+                --json
+            ;;
+        esac
+        echo $? >"$rc_file"
+    ) 2>&1 | parse_stream &
+    local pipe_pid=$!
+    local watchdog_pid=$(start_watchdog "$pipe_pid")
+
+    wait "$pipe_pid"
+    kill "$watchdog_pid" 2>/dev/null
+    wait "$watchdog_pid" 2>/dev/null
+
+    local rc=$(cat "$rc_file" 2>/dev/null || echo "1")
+    rm -f "$rc_file"
+    return "$rc"
 }
 
 # Track elapsed time

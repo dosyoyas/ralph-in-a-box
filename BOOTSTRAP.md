@@ -17,9 +17,14 @@ After bootstrapping, EXIT IMMEDIATELY. The loop will pick up the first task on t
 
 ### Step 1: Initialize beads (if needed)
 
+Determine the project prefix for beads issue IDs:
+1. If `AGENTS.md` contains a JIRA tag (e.g., `LABS-9166`), use it as the prefix
+2. Otherwise, use the current git branch name: `git branch --show-current`
+3. Fallback: current directory name (default)
+
 ```bash
 if [ ! -d ".beads" ]; then
-    bd init --stealth
+    bd init --stealth -p <prefix>
 fi
 ```
 
