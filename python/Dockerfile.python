@@ -26,6 +26,9 @@ RUN npm install -g @beads/bd \
     && ln -sf /usr/local/bin/bd /usr/local/bin/beads \
     && bd --version
 
+# Install Biome (JS/TS linter — equivalent of ruff for JavaScript)
+RUN npm install -g @biomejs/biome
+
 # Install Python dev tools (ruff handles formatting + linting + import sorting)
 RUN pip3 install --break-system-packages \
     pytest \

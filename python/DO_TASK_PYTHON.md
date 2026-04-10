@@ -90,9 +90,10 @@ Exit immediately. Let the bash loop handle the next iteration.
 3. Implement full production-ready code with type hints on all functions
 4. Run static checks on modified files only (do NOT run Docker or the full test suite):
     ```bash
-    ruff check <modified files>
-    pyrefly check <modified files>   # type checking, if available
-    python3 -c "import <module>"     # verify imports resolve
+    ruff check <modified .py files>
+    pyrefly check <modified .py files>   # type checking, if available
+    python3 -c "import <module>"         # verify imports resolve
+    biome ci <modified .js/.ts/.jsx/.tsx files>  # only if JS/TS files were modified
     ```
 
 **Then record modified files and check for siblings:**
@@ -131,6 +132,7 @@ Exit immediately. Let the bash loop handle the next iteration.
     ruff format --check <impl_files> <test_files>
     ruff check <impl_files> <test_files>
     pyrefly check <impl_files> <test_files>  # if available
+    biome ci <js/ts files>                   # only if JS/TS files were modified
     ```
 4. Fix any lint issues found.
 5. **Re-run tests only if** at least one file was modified during steps 2–4. If no files changed, skip the test re-run and proceed to commit.
