@@ -93,8 +93,8 @@ RALPH_AUTH_ARGS=()
 case "$RALPH_AGENT" in
 claude)
     if [ "${CLAUDE_CODE_USE_BEDROCK}" = "1" ]; then
+        RALPH_AUTH_ARGS+=(-v "$HOME/.aws:/root/.aws:ro")
         RALPH_AUTH_ARGS+=(
-            -v "$HOME/.aws:/root/.aws:ro"
             -e "AWS_REGION=${AWS_REGION}"
             -e "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}"
             -e "AWS_PROFILE=${AWS_PROFILE}"
@@ -133,10 +133,10 @@ DOCKER_TTY_FLAGS="-i"
 [ -t 0 ] && DOCKER_TTY_FLAGS="-it"
 
 docker run $DOCKER_TTY_FLAGS --rm \
-    -w /workspace \
+    -w "$WORKSPACE" \
     \
-    `# Workspace - read/write` \
-    -v "$WORKSPACE:/workspace" \
+    `# Workspace - same-path mount (so directory name is preserved for beads prefix)` \
+    -v "$WORKSPACE:$WORKSPACE" \
     \
     `# Agent config directory (writable temp copy — host config is never modified)` \
     -v "$AGENT_CONFIG_TMP:$AGENT_CONFIG_DST" \

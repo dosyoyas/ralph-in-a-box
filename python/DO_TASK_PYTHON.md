@@ -143,13 +143,11 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```
 7. Check if all sibling tasks under the Epic are closed.
    If no: leave the Epic open.
-   If yes: close the Epic, then push to remote:
+   If yes: close the Epic, then sync with remote **only if a remote is already configured**:
     ```bash
-    git pull --rebase
-    git push
-    git status  # must show "up to date with origin"
+    git remote | grep -q . && git pull --rebase && git push && git status
     ```
-    Work is NOT complete until `git push` succeeds. If push fails, resolve and retry.
+    **IMPORTANT:** First run `git remote`. If the output is empty, skip the pull/push entirely — do NOT create a remote, do NOT add an origin. The loop handles the push. If a remote exists and push fails (e.g. conflict), resolve and retry.
 
 **If code review fails:** reopen `[impl]` task with error context.
 **If tests break after simplification:** reopen `[test]` task with error context.

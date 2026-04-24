@@ -74,6 +74,7 @@ docker build --build-arg AGENT=codex -f python/Dockerfile.python -t ralph-codex-
 
 # Claude — Rust
 docker build -f rust/Dockerfile.rust -t ralph-claude-rust:latest .
+
 ```
 
 ### 2. Create your plan
@@ -131,6 +132,7 @@ RALPH_IMAGE=ralph-codex-python:latest \
 RALPH_AGENT=claude \
 RALPH_IMAGE=ralph-claude-rust:latest \
   ./ralph-in-a-box.sh /path/to/project rust/DO_TASK_RUST.md
+
 ```
 
 ### What to expect
@@ -180,6 +182,7 @@ All settings are environment variables:
 | `ANTHROPIC_SMALL_FAST_MODEL` | —                   | Override Claude small/fast model                          |
 | `AWS_PROFILE`                | —                   | AWS profile (Bedrock only)                                |
 | `AWS_REGION`                 | —                   | AWS region (Bedrock only)                                 |
+
 
 ## Container Isolation
 
@@ -254,6 +257,7 @@ To re-bootstrap from scratch, remove `.beads` and run again.
 | `test_generic/`| Python   | Generic string utilities              |
 | `test_direct/` | Python   | Direct task execution (pre-created)   |
 | `test_agents/` | Python   | Multi-agent variant                   |
+
 
 ```bash
 rm -rf test_projects/test_python/.beads
