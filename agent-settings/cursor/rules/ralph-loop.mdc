@@ -1,0 +1,27 @@
+---
+description: Ralph-in-a-box autonomous loop rules — task tracking and iteration protocol
+alwaysApply: true
+---
+
+# Ralph-in-a-box Agent Instructions
+
+You are running inside the ralph-in-a-box autonomous loop. These instructions apply to every iteration.
+
+## Task Tracking
+
+Use `bd` for ALL task tracking. Never use internal TODOs, task lists, or any tool other than `bd`.
+
+```bash
+bd prime              # Load project context
+bd ready --json       # Find next unblocked task
+bd update <id> --claim
+bd show <id> --json
+bd close <id> --reason "..."
+```
+
+## Iteration Rules
+
+1. **ONE PHASE PER ITERATION** — execute one task phase ([impl], [test], or [review]), then exit cleanly
+2. **NO SUBAGENTS** — do the work directly with your own tools
+3. **EXIT AFTER TASK** — let the bash loop handle the next iteration
+4. **CONTEXT IN DESCRIPTIONS** — pass all context via task descriptions, not conversation history

@@ -44,26 +44,36 @@ LOG_DIR="/tmp/ralph_logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${RALPH_AGENT}_live_${PROJECT_NAME}.log"
 
-# Create writable temp copy of agent config directory
+# Build the writable agent config tmpdir used at runtime.
+#
+# Strategy: copy agent-settings/<agent>/ (versionable, repo-managed config)
+# into a tmpdir that the container can write to freely. Auth credentials that
+# cannot live in the repo are injected on top of that copy.
+#
+# cp -rL resolves symlinks, so agent-settings/claude/specs -> ~/.claude/specs
+# is expanded into real files — no dangling symlinks inside the container.
+AGENT_CONFIG_TMP=$(mktemp -d "/tmp/ralph-${RALPH_AGENT}-XXXXXX")
+
 case "$RALPH_AGENT" in
-claude)
-    AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-claude-XXXXXX)
-    # Auth: OAuth credentials + session metadata
+claude|ollama)
+    # Repo config first (CLAUDE.md + specs symlink resolved), then auth credentials on top
+    AGENT_SETTINGS_SRC="$RALPH_DIR/agent-settings/claude"
+    [ -d "$AGENT_SETTINGS_SRC" ] && cp -rL "$AGENT_SETTINGS_SRC/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    # OAuth subscription credentials live in ~/.claude only — not in the repo
     [ -f "$HOME/.claude/.credentials.json" ] && cp -L "$HOME/.claude/.credentials.json" "$AGENT_CONFIG_TMP/" 2>/dev/null || true
     [ -f "$HOME/.claude.json" ] && cp "$HOME/.claude.json" "$AGENT_CONFIG_TMP/.claude.json" 2>/dev/null || true
-    # Config: settings and user specs (resolved from symlinks)
-    [ -f "$HOME/.claude/settings.json" ] && cp -L "$HOME/.claude/settings.json" "$AGENT_CONFIG_TMP/" 2>/dev/null || true
-    [ -d "$HOME/.claude/specs" ] && cp -rL "$HOME/.claude/specs" "$AGENT_CONFIG_TMP/specs" 2>/dev/null || true
     AGENT_CONFIG_DST="/root/.claude"
     ;;
 cursor)
-    AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-cursor-XXXXXX)
-    cp -rLp "$HOME/.cursor/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    # Host rules first, then repo overrides on top (repo wins on conflict)
+    [ -d "$HOME/.cursor" ] && cp -rL "$HOME/.cursor/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    AGENT_SETTINGS_SRC="$RALPH_DIR/agent-settings/cursor"
+    [ -d "$AGENT_SETTINGS_SRC" ] && cp -rL "$AGENT_SETTINGS_SRC/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
     AGENT_CONFIG_DST="/root/.cursor"
     ;;
 codex)
-    AGENT_CONFIG_TMP=$(mktemp -d /tmp/ralph-codex-XXXXXX)
-    cp -rLp "$HOME/.codex/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
+    AGENT_SETTINGS_SRC="$RALPH_DIR/agent-settings/codex"
+    [ -d "$AGENT_SETTINGS_SRC" ] && cp -rL "$AGENT_SETTINGS_SRC/." "$AGENT_CONFIG_TMP/" 2>/dev/null || true
     AGENT_CONFIG_DST="/root/.codex"
     ;;
 esac
@@ -91,6 +101,19 @@ fi
 # Build auth arguments based on agent and environment
 RALPH_AUTH_ARGS=()
 case "$RALPH_AGENT" in
+ollama)
+    RALPH_OLLAMA_MODEL="${RALPH_OLLAMA_MODEL:-qwen2.5-coder:14b}"
+    RALPH_AUTH_ARGS+=(
+        -e "ANTHROPIC_BASE_URL=http://host.docker.internal:11434"
+        -e "ANTHROPIC_API_KEY=ollama"
+        -e "RALPH_OLLAMA_MODEL=$RALPH_OLLAMA_MODEL"
+    )
+    # Linux: host.docker.internal is not automatically available
+    if [ "$(uname -s)" = "Linux" ]; then
+        RALPH_AUTH_ARGS+=(--add-host=host.docker.internal:host-gateway)
+    fi
+    AUTH_MODE="Ollama (local) — model: $RALPH_OLLAMA_MODEL"
+    ;;
 claude)
     if [ "${CLAUDE_CODE_USE_BEDROCK}" = "1" ]; then
         RALPH_AUTH_ARGS+=(-v "$HOME/.aws:/root/.aws:ro")
@@ -138,7 +161,7 @@ docker run $DOCKER_TTY_FLAGS --rm \
     `# Workspace - same-path mount (so directory name is preserved for beads prefix)` \
     -v "$WORKSPACE:$WORKSPACE" \
     \
-    `# Agent config directory (writable temp copy — host config is never modified)` \
+    `# Agent config directory (writable tmpdir — host config is never modified)` \
     -v "$AGENT_CONFIG_TMP:$AGENT_CONFIG_DST" \
     \
     `# Git config and SSH keys for push (read-only)` \

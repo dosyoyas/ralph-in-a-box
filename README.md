@@ -6,7 +6,7 @@ Autonomous software engineering in a container, because YOLO. Give it a plan, wa
 
 ralph-in-a-box is a Docker-based implementation of the [Ralph technique](https://ghuntley.com/ralph/) by Geoffrey Huntley. It runs an AI coding agent in a bash loop — one task per iteration — with structured task tracking via [beads](https://beads.sh) (a CLI task tracker, invoked as `bd`), a three-phase pipeline (implement → test → review), automatic bootstrapping from a plain-text action plan, and a verification step that checks plan coverage before pushing.
 
-Supports three agent backends: **Claude Code**, **Cursor Agent**, and **OpenAI Codex**.
+Supports four agent backends: **Claude Code**, **Cursor Agent**, **OpenAI Codex**, and **Ollama** (local models).
 
 ## Architecture
 
@@ -128,6 +128,12 @@ OPENAI_API_KEY=sk-... \
 RALPH_IMAGE=ralph-codex-python:latest \
   ./ralph-in-a-box.sh /path/to/project
 
+# Ollama (local model — Ollama must be running on the host)
+RALPH_AGENT=ollama \
+RALPH_OLLAMA_MODEL=qwen2.5-coder:14b \
+RALPH_IMAGE=ralph-claude-python:latest \
+  ./ralph-in-a-box.sh /path/to/project
+
 # Rust variant (any agent)
 RALPH_AGENT=claude \
 RALPH_IMAGE=ralph-claude-rust:latest \
@@ -161,6 +167,7 @@ Selected via `RALPH_AGENT` (defaults to `claude`). All three use the same loop, 
 | **Claude Code** | `claude` | `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_USE_BEDROCK=1`, or subscription (`claude login`) | `~/.claude` |
 | **Cursor Agent** | `cursor` | `CURSOR_API_KEY` | `~/.cursor` |
 | **OpenAI Codex** | `codex` | `OPENAI_API_KEY` | `~/.codex` |
+| **Ollama** | `ollama` | _(none — runs locally)_ | `~/.claude` |
 
 The agent's host config directory is copied (not mounted) into the container at startup, so your host configuration is never modified.
 
@@ -170,7 +177,7 @@ All settings are environment variables:
 
 | Variable                     | Default             | Description                                               |
 | ---------------------------- | ------------------- | --------------------------------------------------------- |
-| `RALPH_AGENT`                | `claude`            | Agent backend: `claude`, `cursor`, or `codex`             |
+| `RALPH_AGENT`                | `claude`            | Agent backend: `claude`, `cursor`, `codex`, or `ollama`   |
 | `RALPH_IMAGE`                | `ralph-loop:latest` | Docker image to use                                       |
 | `MAX_ITERATIONS`             | `50`                | Maximum loop iterations before stopping                   |
 | `MAX_COST`                   | `100.00`            | Maximum spend in USD (Claude only)                        |
@@ -182,6 +189,7 @@ All settings are environment variables:
 | `ANTHROPIC_SMALL_FAST_MODEL` | —                   | Override Claude small/fast model                          |
 | `AWS_PROFILE`                | —                   | AWS profile (Bedrock only)                                |
 | `AWS_REGION`                 | —                   | AWS region (Bedrock only)                                 |
+| `RALPH_OLLAMA_MODEL`         | `qwen2.5-coder:14b` | Model name passed to Ollama (`RALPH_AGENT=ollama` only)   |
 
 
 ## Container Isolation
@@ -215,6 +223,29 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 | `3`   | MAX_ITERATIONS reached                 |
 | `4`   | MAX_COST exceeded (Claude only)        |
 | other | Agent error                            |
+
+## Agent Settings
+
+Agent configuration lives in `agent-settings/` inside this repo — versionable, shared across machines, and separate from your personal dotfiles.
+
+```
+agent-settings/
+  claude/
+    CLAUDE.md          # Ralph-specific instructions injected into every iteration
+    specs -> ~/.claude/specs   # Symlink resolved at runtime by cp -rL
+  cursor/
+    rules/
+      ralph-loop.mdc   # alwaysApply: true — merged on top of ~/.cursor/rules at runtime
+```
+
+At launch, `ralph-in-a-box.sh` builds a writable tmpdir for the container:
+
+- **Claude / Ollama:** copies `agent-settings/claude/` (symlinks resolved) then overlays OAuth credentials from `~/.claude/.credentials.json` if present
+- **Cursor:** copies `~/.cursor/` first, then overlays `agent-settings/cursor/` on top — repo rules win on conflict
+
+**Auth credentials are never stored here.** They come from environment variables or, for Claude subscription (OAuth), from `~/.claude/.credentials.json` which is copied separately at runtime and never committed.
+
+To add or override rules, edit files under `agent-settings/`. Changes take effect on the next run — no image rebuild needed.
 
 ## Project Conventions
 

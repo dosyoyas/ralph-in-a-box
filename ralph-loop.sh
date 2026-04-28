@@ -114,6 +114,14 @@ invoke_agent() {
     # Run agent in background, capture its exit code to a file
     (
         case "$RALPH_AGENT" in
+        ollama)
+            claude -p "$(cat "$prompt_file")" \
+                --add-dir "$AGENT_CONFIG_DIR" \
+                --dangerously-skip-permissions \
+                --output-format stream-json \
+                --verbose \
+                --model "${RALPH_OLLAMA_MODEL:-qwen2.5-coder:14b}"
+            ;;
         claude)
             claude -p "$(cat "$prompt_file")" \
                 --add-dir "$AGENT_CONFIG_DIR" \
