@@ -11,7 +11,11 @@ All tasks are completed. Before the session ends, generate a coverage report com
 
 ## Instructions
 
-1. Read `ACTION_PLAN.md`
+1. Find and read the action plan. After bootstrap it is archived with a timestamp:
+   ```bash
+   ls -t ACTION_PLAN_*.md | head -1
+   ```
+   Read that file.
 2. Run these two commands to get all tasks regardless of status:
    ```
    bd list --status=closed --json

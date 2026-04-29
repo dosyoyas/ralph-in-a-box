@@ -230,7 +230,34 @@ while true; do
 
     if [ "$TOTAL" = "0" ] || [ -z "$TOTAL" ]; then
         # bd list --json only returns open tasks; if .beads exists, all tasks are closed
-        if [ -d ".beads" ]; then
+        if [ -d ".beads" ] && [ -f "ACTION_PLAN.md" ]; then
+            # New ACTION_PLAN.md with all previous tasks closed — re-bootstrap
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "🚀 BOOTSTRAP — New ACTION_PLAN.md detected (previous tasks closed)"
+            echo "════════════════════════════════════════"
+
+            rm -f .beads/dolt-access.lock 2>/dev/null
+            >"$LOG_FILE"
+            echo "=== Bootstrap $(date) ===" >>"$LOG_FILE"
+
+            invoke_agent "$BOOTSTRAP_FILE"
+
+            AGENT_EXIT_CODE=$?
+            if [ $AGENT_EXIT_CODE -ne 0 ]; then
+                echo ""
+                echo "════════════════════════════════════════"
+                echo "❌ BOOTSTRAP ERROR (exit code: $AGENT_EXIT_CODE)"
+                echo "════════════════════════════════════════"
+                exit $AGENT_EXIT_CODE
+            fi
+
+            mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
+            echo "ACTION_PLAN.md archived after bootstrap"
+
+            sleep $CHECK_INTERVAL
+            continue
+        elif [ -d ".beads" ]; then
             OPEN="0"
         elif [ -f "ACTION_PLAN.md" ]; then
             echo ""
@@ -253,6 +280,9 @@ while true; do
                 exit $AGENT_EXIT_CODE
             fi
 
+            mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
+            echo "ACTION_PLAN.md archived after bootstrap"
+
             sleep $CHECK_INTERVAL
             continue
         else
@@ -272,8 +302,9 @@ while true; do
         echo "════════════════════════════════════════"
         bd list --status closed | head -20
 
-        # Verification: compare ACTION_PLAN.md against completed tasks (informational only)
-        if [ -f "ACTION_PLAN.md" ] && [ -f "$VERIFY_FILE" ]; then
+        # Verification: compare ACTION_PLAN against completed tasks (informational only)
+        ACTION_PLAN=$(ls -t ACTION_PLAN_*.md 2>/dev/null | head -1)
+        if [ -n "$ACTION_PLAN" ] && [ -f "$VERIFY_FILE" ]; then
             echo ""
             echo "════════════════════════════════════════"
             echo "📋 VERIFYING PLAN COVERAGE"
