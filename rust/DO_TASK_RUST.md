@@ -131,7 +131,9 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```bash
     cargo fmt --all --check 2>&1
     cargo clippy -p <crate> --all-targets --all-features -- -D warnings -W clippy::cargo -A clippy::multiple_crate_versions 2>&1
+    gitleaks detect -v
     ```
+    **If gitleaks finds secrets:** remove them from the code immediately. Use environment variables or config files listed in `.gitignore` instead. Do NOT proceed to commit until gitleaks passes clean.
     > If the project does not use feature flags, omit `--all-features`.
 4. Fix any format or clippy issues found.
     ```bash
