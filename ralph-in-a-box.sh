@@ -8,7 +8,7 @@
 #                 Defaults to DO_TASK_PYTHON.md.
 #                 Example: ./ralph-in-a-box.sh /path/to/project DO_TASK_AGENTS.md
 #
-#   RALPH_IMAGE   Docker image to use (env var). Defaults to ralph-loop:latest.
+#   RALPH_IMAGE   Docker image to use (env var). Defaults to ralph-python:latest.
 #                 Example: RALPH_IMAGE=ralph-loop-rust:latest ./ralph-in-a-box.sh ...
 
 set -e
@@ -191,4 +191,4 @@ docker run $DOCKER_TTY_FLAGS --rm \
     -v "$RALPH_DIR/BOOTSTRAP.md:/opt/ralph/BOOTSTRAP.md:ro" \
     -v "$RALPH_DIR/VERIFY.md:/opt/ralph/VERIFY.md:ro" \
     \
-    "${RALPH_IMAGE:-ralph-loop:latest}"
+    "${RALPH_IMAGE:-ralph-python:latest}"

@@ -60,21 +60,14 @@ Failures retry up to 3 times before creating a blocker task for manual intervent
 
 ### 1. Build the image
 
-Each image is built for a specific agent + language combination using the `AGENT` build arg (defaults to `claude`):
+Each image includes all agent CLIs (Claude, Cursor, Codex). The agent is selected at runtime via `RALPH_AGENT`:
 
 ```bash
-# Claude — Python
-docker build -f python/Dockerfile.python -t ralph-claude-python:latest .
+# Python
+docker build -f python/Dockerfile.python -t ralph-python:latest .
 
-# Cursor — Python
-docker build --build-arg AGENT=cursor -f python/Dockerfile.python -t ralph-cursor-python:latest .
-
-# Codex — Python
-docker build --build-arg AGENT=codex -f python/Dockerfile.python -t ralph-codex-python:latest .
-
-# Claude — Rust
-docker build -f rust/Dockerfile.rust -t ralph-claude-rust:latest .
-
+# Rust
+docker build -f rust/Dockerfile.rust -t ralph-rust:latest .
 ```
 
 ### 2. Create your plan
@@ -98,47 +91,38 @@ Each `##` group becomes an Epic, each bullet becomes an `[impl]` task. Cross-gro
 ### 3. Run
 
 ```bash
-RALPH_AGENT=<agent> <API_KEY_VAR>=<key> RALPH_IMAGE=<image> ./ralph-in-a-box.sh /path/to/project
+RALPH_AGENT=<agent> <API_KEY_VAR>=<key> ./ralph-in-a-box.sh /path/to/project
 ```
 
 Examples:
 
 ```bash
 # Claude (API key)
-RALPH_AGENT=claude \
 ANTHROPIC_API_KEY=sk-ant-... \
-RALPH_IMAGE=ralph-claude-python:latest \
   ./ralph-in-a-box.sh /path/to/project
 
 # Claude (Bedrock)
-RALPH_AGENT=claude \
 CLAUDE_CODE_USE_BEDROCK=1 \
-RALPH_IMAGE=ralph-claude-python:latest \
   ./ralph-in-a-box.sh /path/to/project
 
 # Cursor
 RALPH_AGENT=cursor \
 CURSOR_API_KEY=cur-... \
-RALPH_IMAGE=ralph-cursor-python:latest \
   ./ralph-in-a-box.sh /path/to/project
 
 # Codex
 RALPH_AGENT=codex \
 OPENAI_API_KEY=sk-... \
-RALPH_IMAGE=ralph-codex-python:latest \
   ./ralph-in-a-box.sh /path/to/project
 
 # Ollama (local model — Ollama must be running on the host)
 RALPH_AGENT=ollama \
 RALPH_OLLAMA_MODEL=qwen2.5-coder:14b \
-RALPH_IMAGE=ralph-claude-python:latest \
   ./ralph-in-a-box.sh /path/to/project
 
 # Rust variant (any agent)
-RALPH_AGENT=claude \
-RALPH_IMAGE=ralph-claude-rust:latest \
+RALPH_IMAGE=ralph-rust:latest \
   ./ralph-in-a-box.sh /path/to/project rust/DO_TASK_RUST.md
-
 ```
 
 ### What to expect
@@ -178,7 +162,7 @@ All settings are environment variables:
 | Variable                     | Default             | Description                                               |
 | ---------------------------- | ------------------- | --------------------------------------------------------- |
 | `RALPH_AGENT`                | `claude`            | Agent backend: `claude`, `cursor`, `codex`, or `ollama`   |
-| `RALPH_IMAGE`                | `ralph-loop:latest` | Docker image to use                                       |
+| `RALPH_IMAGE`                | `ralph-python:latest` | Docker image to use                                     |
 | `MAX_ITERATIONS`             | `50`                | Maximum loop iterations before stopping                   |
 | `MAX_COST`                   | `100.00`            | Maximum spend in USD (Claude only)                        |
 | `ANTHROPIC_API_KEY`          | —                   | Claude auth (API key)                                     |
