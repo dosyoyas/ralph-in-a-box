@@ -133,7 +133,7 @@ Exit immediately. Let the bash loop handle the next iteration.
     ruff check <impl_files> <test_files>
     pyrefly check <impl_files> <test_files>  # if available
     biome ci <js/ts files>                   # only if JS/TS files were modified
-    gitleaks detect -v
+    /usr/local/bin/gitleaks detect -v
     ```
     **If gitleaks finds secrets:** remove them from the code immediately. Use environment variables or config files listed in `.gitignore` instead. Do NOT proceed to commit until gitleaks passes clean.
 4. Fix any lint issues found.
