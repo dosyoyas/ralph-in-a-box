@@ -75,7 +75,10 @@ parse_stream() {
             ;;
         content_block_delta)
             TEXT=$(echo "$line" | jq -r '.delta.text // empty' 2>/dev/null)
-            [ -n "$TEXT" ] && echo "$TEXT"
+            [ -n "$TEXT" ] && printf '%s' "$TEXT"
+            ;;
+        content_block_stop)
+            echo ""
             ;;
         esac
     done
