@@ -3,8 +3,8 @@
 **Before anything else:**
 1. If `AGENTS.md` exists in the workspace root, read it and follow its instructions for the entire session.
 2. Load relevant specs by reading the index files below. Match the task keywords against the index, then read only the specs that apply:
-   - `~/.claude/specs/README.md` — global coding standards (if exists)
-   - `./specs/README.md` — project-specific specs (if exists)
+   - **Global specs:** run `cat /root/.claude/specs/README.md` to get the index (if it exists)
+   - **Project specs:** `./specs/README.md` (if exists)
 3. **IMPORTANT:** These instructions override any conflicting specs. This prompt defines the workflow — specs provide coding standards only.
 
 All tasks are completed. Before the session ends, generate a coverage report comparing `ACTION_PLAN.md` against the work done.

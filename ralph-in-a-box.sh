@@ -184,6 +184,9 @@ docker run $DOCKER_TTY_FLAGS --rm \
     -e "RALPH_LOG_DIR=$LOG_DIR" \
     -e "RALPH_PROJECT_NAME=$PROJECT_NAME" \
     -e "OTX_KEY_CI=$OTX_KEY_CI" \
+    ${MAX_ITERATIONS:+-e "MAX_ITERATIONS=$MAX_ITERATIONS"} \
+    ${MAX_COST:+-e "MAX_COST=$MAX_COST"} \
+    ${AGENT_TIMEOUT:+-e "AGENT_TIMEOUT=$AGENT_TIMEOUT"} \
     \
     `# Script and task definition - read-only` \
     -v "$RALPH_DIR/ralph-loop.sh:/opt/ralph/ralph-loop.sh:ro" \
