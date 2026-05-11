@@ -163,7 +163,7 @@ PROTECTED_FILES="AGENTS.md specs"
 ACTION_PLAN_BAK="${LOG_DIR}/action-plan_${PROJECT_NAME}.bak"
 
 protect_before() {
-    [ -f ACTION_PLAN.md ] && cp ACTION_PLAN.md "$ACTION_PLAN_BAK"
+    [ -f ACTION_PLAN.md ] && cp ACTION_PLAN.md "$ACTION_PLAN_BAK" || true
 }
 
 protect_after() {
