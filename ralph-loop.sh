@@ -158,6 +158,24 @@ invoke_agent() {
     return "$rc"
 }
 
+# Protected files: restore if agent deletes them
+PROTECTED_FILES="AGENTS.md specs"
+ACTION_PLAN_BAK="${LOG_DIR}/action-plan_${PROJECT_NAME}.bak"
+
+protect_before() {
+    [ -f ACTION_PLAN.md ] && cp ACTION_PLAN.md "$ACTION_PLAN_BAK"
+}
+
+protect_after() {
+    for f in $PROTECTED_FILES; do
+        [ ! -e "$f" ] && git checkout -- "$f" 2>/dev/null && echo "⚠️  Restored $f (agent deleted it)"
+    done
+    if [ ! -f ACTION_PLAN.md ] && [ -f "$ACTION_PLAN_BAK" ]; then
+        cp "$ACTION_PLAN_BAK" ACTION_PLAN.md
+        echo "⚠️  Restored ACTION_PLAN.md (agent deleted it)"
+    fi
+}
+
 # Track elapsed time
 START_TIME=$(date +%s)
 elapsed() {
@@ -244,7 +262,9 @@ while true; do
             >"$LOG_FILE"
             echo "=== Bootstrap $(date) ===" >>"$LOG_FILE"
 
+            protect_before
             invoke_agent "$BOOTSTRAP_FILE"
+            protect_after
 
             AGENT_EXIT_CODE=$?
             if [ $AGENT_EXIT_CODE -ne 0 ]; then
@@ -256,6 +276,7 @@ while true; do
             fi
 
             mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
+            rm -f "$ACTION_PLAN_BAK"
             echo "ACTION_PLAN.md archived after bootstrap"
 
             sleep $CHECK_INTERVAL
@@ -272,7 +293,9 @@ while true; do
             >"$LOG_FILE"
             echo "=== Bootstrap $(date) ===" >>"$LOG_FILE"
 
+            protect_before
             invoke_agent "$BOOTSTRAP_FILE"
+            protect_after
 
             AGENT_EXIT_CODE=$?
             if [ $AGENT_EXIT_CODE -ne 0 ]; then
@@ -284,6 +307,7 @@ while true; do
             fi
 
             mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
+            rm -f "$ACTION_PLAN_BAK"
             echo "ACTION_PLAN.md archived after bootstrap"
 
             sleep $CHECK_INTERVAL
@@ -317,7 +341,9 @@ while true; do
             >"$LOG_FILE"
             echo "=== Verify $(date) ===" >>"$LOG_FILE"
 
+            protect_before
             invoke_agent "$VERIFY_FILE"
+            protect_after
 
             echo ""
         fi
@@ -362,7 +388,9 @@ while true; do
     >"$LOG_FILE"
     echo "=== Starting task $(date) ===" >>"$LOG_FILE"
 
+    protect_before
     invoke_agent "$DO_TASK_FILE"
+    protect_after
 
     AGENT_EXIT_CODE=$?
 

@@ -308,3 +308,4 @@ MAX_RETRIES: 2 (default)
 5. **NO TEST CHEATING** — Fix implementation, never modify tests to make them pass
 6. **EXIT AFTER TASK** — Let bash loop handle next iteration
 7. **NO PLACEHOLDERS** — Full implementations only
+8. **NEVER DELETE** `AGENTS.md`, `specs/`, or `ACTION_PLAN.md` — these are managed by the loop
