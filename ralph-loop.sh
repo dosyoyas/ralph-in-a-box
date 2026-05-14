@@ -329,7 +329,8 @@ while true; do
         echo "════════════════════════════════════════"
         bd list --status closed | head -20
 
-        # Verification: compare ACTION_PLAN against completed tasks (informational only)
+        # Verification: compare ACTION_PLAN against completed tasks
+        VERIFY_OK=true
         ACTION_PLAN=$(ls -t ACTION_PLAN_*.md 2>/dev/null | head -1)
         if [ -n "$ACTION_PLAN" ] && [ -f "$VERIFY_FILE" ]; then
             echo ""
@@ -343,8 +344,29 @@ while true; do
 
             protect_before
             invoke_agent "$VERIFY_FILE"
+            VERIFY_EXIT=$?
             protect_after
 
+            if [ "$VERIFY_EXIT" -ne 0 ]; then
+                VERIFY_OK=false
+                echo ""
+                echo "⚠️  Verify reported gaps or dirty workspace (exit $VERIFY_EXIT)"
+            fi
+            echo ""
+        fi
+
+        # Strict landing: check for uncommitted changes
+        DIRTY_FILES=$(git status --porcelain 2>/dev/null | grep -v '^?? ' || true)
+        UNTRACKED=$(git status --porcelain 2>/dev/null | grep '^?? ' || true)
+        if [ -n "$DIRTY_FILES" ]; then
+            VERIFY_OK=false
+            echo "⚠️  DIRTY WORKSPACE — uncommitted changes:"
+            echo "$DIRTY_FILES"
+            echo ""
+        fi
+        if [ -n "$UNTRACKED" ]; then
+            echo "ℹ️  Untracked files (not blocking):"
+            echo "$UNTRACKED"
             echo ""
         fi
 
@@ -357,14 +379,22 @@ while true; do
         else
             echo "No git remote configured — skipping push"
         fi
-        echo "Verifying status..."
-        git status
         echo ""
-        echo "════════════════════════════════════════"
-        echo "✅ WORK SESSION COMPLETE"
-        echo "════════════════════════════════════════"
-        printf "Iterations: %d | Total cost: \$%.2f | Elapsed: %s\n" "$ITERATION" "$TOTAL_COST" "$(elapsed)"
-        exit 0
+
+        if [ "$VERIFY_OK" = true ]; then
+            echo "════════════════════════════════════════"
+            echo "✅ WORK SESSION COMPLETE"
+            echo "════════════════════════════════════════"
+            printf "Iterations: %d | Total cost: \$%.2f | Elapsed: %s\n" "$ITERATION" "$TOTAL_COST" "$(elapsed)"
+            exit 0
+        else
+            echo "════════════════════════════════════════"
+            echo "⚠️  SESSION FINISHED WITH WARNINGS"
+            echo "════════════════════════════════════════"
+            printf "Iterations: %d | Total cost: \$%.2f | Elapsed: %s\n" "$ITERATION" "$TOTAL_COST" "$(elapsed)"
+            echo "Review the verify output above for gaps or uncommitted changes."
+            exit 5
+        fi
     fi
 
     if [ "$READY" = "0" ]; then

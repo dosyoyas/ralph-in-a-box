@@ -77,13 +77,24 @@ bd dep add {EPIC_B_TASK_ID} {EPIC_A_TASK_ID}
 
 Only add explicit dependencies when the plan states them. Priority ordering handles most cases.
 
-### Step 5: Verify
+### Step 5: Verify coverage
+
+Compare every deliverable bullet in `ACTION_PLAN.md` against the tasks you just created:
 
 ```bash
-bd list
+bd list --json
 ```
 
-Confirm all Epics and tasks were created correctly.
+1. Count the deliverable bullets in the plan (each `-` item under a feature group = 1 deliverable)
+2. For each deliverable, find a matching `[impl]` task by keyword/file name
+3. Print a pre-flight coverage check:
+
+```
+Pre-flight coverage: X/Y deliverables have matching tasks
+```
+
+4. **If X < Y** — some deliverables were missed. Create the missing `[impl]` tasks now, then re-run this check until X == Y.
+5. **If X == Y** — all deliverables are covered. Proceed to exit.
 
 ### Step 6: Exit
 

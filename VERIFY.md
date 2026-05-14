@@ -41,10 +41,27 @@ ACTION_PLAN.md Coverage Report
 Coverage: X/Y deliverables completed
 ```
 
+5. Check for uncommitted changes:
+   ```bash
+   git status --porcelain
+   ```
+   If there are modified or untracked files not in `.gitignore`, append a dirty-workspace warning:
+   ```
+   ⚠️  DIRTY WORKSPACE — uncommitted changes detected:
+   {list of files from git status}
+   ```
+
+## Exit code
+
+- If coverage is **X/Y where X == Y** AND the workspace is clean: exit 0
+- If coverage has gaps (X < Y) OR workspace is dirty: exit 1
+
+The loop uses this exit code to decide whether to declare the session complete.
+
 ## Rules
 
 - This is a READ-ONLY report. Do NOT create tasks, modify code, or take any action.
-- Print the report to stdout and exit.
+- Print the report to stdout and exit with the appropriate code.
 - If a deliverable was split into multiple tasks, list all of them.
 - If a deliverable has no matching task by any of the above criteria (title, description, file name, or keyword), mark it with ✗.
 - End with a single summary line: `Coverage: X/Y deliverables completed`
