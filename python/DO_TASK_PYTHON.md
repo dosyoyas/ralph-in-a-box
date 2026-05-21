@@ -309,3 +309,9 @@ MAX_RETRIES: 2 (default)
 6. **EXIT AFTER TASK** — Let bash loop handle next iteration
 7. **NO PLACEHOLDERS** — Full implementations only
 8. **NEVER DELETE** `AGENTS.md`, `specs/`, or `ACTION_PLAN.md` — these are managed by the loop
+9. **FAIL FAST ON ENVIRONMENT ERRORS** — If you encounter any of these errors, do NOT create a BLOCKED task. Instead, leave the current task open (unclaimed) and exit immediately with a non-zero exit code so the loop halts:
+   - AWS SSO/token expired (`TokenRetrievalError`, `InvalidGrantException`, `ExpiredTokenException`)
+   - Docker OOM kill (exit code 137)
+   - Docker daemon unreachable
+   - Network/auth failures that are not code bugs
+   These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup.

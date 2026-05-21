@@ -174,6 +174,8 @@ All settings are environment variables:
 | `AWS_PROFILE`                | —                   | AWS profile (Bedrock only)                                |
 | `AWS_REGION`                 | —                   | AWS region (Bedrock only)                                 |
 | `RALPH_OLLAMA_MODEL`         | `qwen2.5-coder:14b` | Model name passed to Ollama (`RALPH_AGENT=ollama` only)   |
+| `RALPH_MIN_DOCKER_MEM_GB`   | `10`                | Minimum Docker memory (GB) — loop exits if below this     |
+| `RALPH_REQUIRE_AWS`          | —                   | Set to `1` to require valid AWS credentials at startup    |
 
 
 ## Container Isolation
@@ -206,6 +208,7 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 | `2`   | Blocked — manual intervention required |
 | `3`   | MAX_ITERATIONS reached                 |
 | `4`   | MAX_COST exceeded (Claude only)        |
+| `6`   | Environment error (AWS token expired, Docker OOM/unreachable) |
 | other | Agent error                            |
 
 ## Agent Settings

@@ -176,6 +176,51 @@ protect_after() {
     fi
 }
 
+# Pre-flight environment check: detect conditions that will cause every iteration to fail.
+# Runs once at startup and before each iteration. Exits immediately so the user can fix the
+# environment rather than burning iterations on BLOCKED tasks.
+preflight_check() {
+    # Check AWS SSO token (only if AWS CLI is available and project uses it)
+    if [ -n "$RALPH_REQUIRE_AWS" ] || command -v otxb_build.py &>/dev/null; then
+        if command -v aws &>/dev/null && ! aws sts get-caller-identity &>/dev/null 2>&1; then
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "❌ ENVIRONMENT ERROR: AWS credentials expired or invalid"
+            echo "════════════════════════════════════════"
+            echo "The AWS SSO token is not valid. Tests and Docker builds will fail."
+            echo ""
+            echo "Fix: run 'dev-login' or 'aws sso login' on the host, then re-launch ralph."
+            exit 6
+        fi
+    fi
+
+    # Check Docker is responsive and has enough memory for test suites
+    if command -v docker &>/dev/null; then
+        if ! docker info &>/dev/null 2>&1; then
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "❌ ENVIRONMENT ERROR: Docker is not responding"
+            echo "════════════════════════════════════════"
+            echo "Docker daemon is unreachable. Ensure Docker Desktop is running."
+            exit 6
+        fi
+
+        DOCKER_MEM_BYTES=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo "0")
+        DOCKER_MEM_GB=$(echo "$DOCKER_MEM_BYTES / 1073741824" | bc 2>/dev/null || echo "0")
+        MIN_DOCKER_MEM_GB="${RALPH_MIN_DOCKER_MEM_GB:-10}"
+        if [ "$DOCKER_MEM_GB" -lt "$MIN_DOCKER_MEM_GB" ] 2>/dev/null; then
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "❌ ENVIRONMENT ERROR: Docker memory too low (${DOCKER_MEM_GB}GB < ${MIN_DOCKER_MEM_GB}GB)"
+            echo "════════════════════════════════════════"
+            echo "Test suites need at least ${MIN_DOCKER_MEM_GB}GB. Previous runs hit OOM (exit 137)."
+            echo ""
+            echo "Fix: Docker Desktop → Settings → Resources → Memory → ${MIN_DOCKER_MEM_GB}GB+"
+            exit 6
+        fi
+    fi
+}
+
 # Track elapsed time
 START_TIME=$(date +%s)
 elapsed() {
@@ -196,6 +241,9 @@ else
     echo "Limits: MAX_ITERATIONS=$MAX_ITERATIONS"
 fi
 echo "Starting $RALPH_AGENT automation loop with beads..."
+
+# Run pre-flight checks once at startup
+preflight_check
 
 while true; do
     # Load accumulated cost and iteration count
@@ -242,6 +290,9 @@ while true; do
         printf "ITERATION %d/%d | %s | Agent: %s\n" "$ITERATION" "$MAX_ITERATIONS" "$(elapsed)" "$RALPH_AGENT"
     fi
     echo "═══════════════════════════════════════════════════════════"
+
+    # Re-check environment each iteration (tokens can expire mid-run)
+    preflight_check
 
     # Task detection: get counts (fallback to empty if beads not initialized)
     TASK_JSON=$(bd list --json 2>/dev/null || echo "[]")
