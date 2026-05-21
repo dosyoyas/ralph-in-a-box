@@ -448,10 +448,13 @@ while true; do
         fi
     fi
 
-    if [ "$READY" = "0" ]; then
+    # Count only actionable tasks (not epics) in the ready queue
+    READY_TASKS=$(bd ready --json 2>/dev/null | jq '[.[] | select(.title | test("^\\[impl\\]|^\\[test\\]|^\\[review\\]"))] | length' 2>/dev/null || echo "0")
+
+    if [ "$READY_TASKS" = "0" ]; then
         echo ""
         echo "════════════════════════════════════════"
-        echo "⚠️  BLOCKED - Manual intervention required"
+        echo "⚠️  BLOCKED - No actionable tasks (only epics/deferred remain)"
         echo "════════════════════════════════════════"
         echo ""
         bd list
