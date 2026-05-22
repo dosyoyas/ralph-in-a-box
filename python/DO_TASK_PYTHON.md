@@ -315,3 +315,9 @@ MAX_RETRIES: 2 (default)
    - Docker daemon unreachable
    - Network/auth failures that are not code bugs
    These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup.
+10. **STRICT SCOPE** — Only modify/create files listed in ACTION_PLAN "Files to touch". Do NOT:
+    - Refactor existing code that works and is not required by the task
+    - Create documentation files (*.md) unless the plan explicitly requests them
+    - Create helper scripts or wrapper utilities
+    - Add abstractions (classes, wrappers, indirection) not specified in the plan
+    If you need to touch an unlisted file to make the implementation work (e.g. a test fixture), that is acceptable. Refactors and "improvements" to adjacent code are NOT acceptable — they belong in a separate ticket.
