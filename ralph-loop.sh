@@ -210,6 +210,31 @@ protect_after() {
     fi
 }
 
+# Archive ACTION_PLAN.md after a bootstrap — but ONLY if the agent actually
+# created tasks in beads. A bootstrap can "succeed" (exit 0) while producing
+# zero tasks (e.g. the agent backend returned empty responses). Archiving the
+# plan in that case strands the workspace with no plan and no tasks, so the
+# next iteration exits 1. Instead, keep the plan and halt so the user can fix
+# the agent and re-run without losing the plan.
+archive_plan_or_halt() {
+    local total
+    total=$(bd list --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+    if [ -z "$total" ] || [ "$total" = "0" ]; then
+        echo ""
+        echo "════════════════════════════════════════"
+        echo "❌ BOOTSTRAP PRODUCED NO TASKS"
+        echo "════════════════════════════════════════"
+        echo "The bootstrap finished but beads has no tasks. ACTION_PLAN.md is"
+        echo "kept (not archived). This usually means the agent backend failed to"
+        echo "respond (e.g. Ollama returned empty output). Fix the agent and"
+        echo "re-launch — the plan is preserved."
+        exit 6
+    fi
+    mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
+    rm -f "$ACTION_PLAN_BAK"
+    echo "ACTION_PLAN.md archived after bootstrap ($total tasks created)"
+}
+
 # Pre-flight environment check: detect conditions that will cause every iteration to fail.
 # Runs once at startup and before each iteration. Exits immediately so the user can fix the
 # environment rather than burning iterations on BLOCKED tasks.
@@ -360,9 +385,7 @@ while true; do
                 exit $AGENT_EXIT_CODE
             fi
 
-            mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
-            rm -f "$ACTION_PLAN_BAK"
-            echo "ACTION_PLAN.md archived after bootstrap"
+            archive_plan_or_halt
 
             sleep $CHECK_INTERVAL
             continue
@@ -391,9 +414,7 @@ while true; do
                 exit $AGENT_EXIT_CODE
             fi
 
-            mv ACTION_PLAN.md "ACTION_PLAN_$(date +%Y%m%d_%H%M%S).md"
-            rm -f "$ACTION_PLAN_BAK"
-            echo "ACTION_PLAN.md archived after bootstrap"
+            archive_plan_or_halt
 
             sleep $CHECK_INTERVAL
             continue
