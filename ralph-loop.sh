@@ -34,17 +34,32 @@ ITERATION=0
 # Note: SIGKILL cannot be trapped — startup cleanup below covers that case.
 cleanup() {
     rm -f .beads/dolt-access.lock 2>/dev/null
+    rm -f "$USAGE_LIMIT_FILE" 2>/dev/null
 }
 trap cleanup EXIT SIGTERM SIGINT
 
 # Timestamp file for watchdog (tracks last output from agent)
 HEARTBEAT_FILE=$(mktemp /tmp/ralph-heartbeat-XXXXXX)
 
+# Flag file: set by parse_stream when the agent reports an account usage/quota
+# limit (e.g. Cursor "You've reached your normal usage limit"). The agent keeps
+# emitting this every iteration without a non-zero exit, so the loop must detect
+# it from the stream and halt — re-running only burns more attempts.
+USAGE_LIMIT_FILE=$(mktemp /tmp/ralph-usagelimit-XXXXXX)
+
 # Parse stream-json: full output to log file, summaries to console
 parse_stream() {
     while IFS= read -r line; do
         echo "$line" >>"$LOG_FILE"
         date +%s >"$HEARTBEAT_FILE"
+
+        # Detect account usage/quota exhaustion in the raw stream (any agent).
+        # These messages are not tied to a non-zero exit code, so flag them here.
+        case "$line" in
+        *"reached your normal usage limit"* | *"out of usage"* | *"increase your limit to continue"* | *"usage limit"*)
+            echo "LIMIT" >"$USAGE_LIMIT_FILE"
+            ;;
+        esac
 
         TYPE=$(echo "$line" | jq -r '.type // empty' 2>/dev/null)
         case "$TYPE" in
@@ -113,6 +128,8 @@ invoke_agent() {
     local prompt_file="$1"
     local rc_file=$(mktemp /tmp/ralph-rc-XXXXXX)
     date +%s >"$HEARTBEAT_FILE"
+    # Clear any usage-limit flag from a previous invocation before this run.
+    : >"$USAGE_LIMIT_FILE"
 
     # Run agent in background, capture its exit code to a file
     (
@@ -155,6 +172,23 @@ invoke_agent() {
 
     local rc=$(cat "$rc_file" 2>/dev/null || echo "1")
     rm -f "$rc_file"
+
+    # If the agent reported an account usage/quota limit, halt the whole loop.
+    # Retrying only burns more attempts against an exhausted account; the user
+    # must raise the limit (or wait for reset) before re-launching.
+    if [ -s "$USAGE_LIMIT_FILE" ]; then
+        echo ""
+        echo "════════════════════════════════════════"
+        echo "❌ ENVIRONMENT ERROR: Agent account usage limit reached"
+        echo "════════════════════════════════════════"
+        echo "The agent reported it is out of usage (e.g. Cursor: 'You've reached"
+        echo "your normal usage limit'). The loop cannot make progress."
+        echo ""
+        echo "Fix: ask your admin to raise the limit (or wait for the quota to"
+        echo "reset), then re-launch ralph."
+        exit 6
+    fi
+
     return "$rc"
 }
 

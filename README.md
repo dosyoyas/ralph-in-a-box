@@ -208,7 +208,7 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 | `2`   | Blocked — manual intervention required |
 | `3`   | MAX_ITERATIONS reached                 |
 | `4`   | MAX_COST exceeded (Claude only)        |
-| `6`   | Environment error (AWS token expired, Docker OOM/unreachable) |
+| `6`   | Environment error (AWS token expired, Docker OOM/unreachable, agent usage limit reached) |
 | other | Agent error                            |
 
 ## Agent Settings
