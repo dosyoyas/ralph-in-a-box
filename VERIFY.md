@@ -22,8 +22,8 @@ All tasks are completed. Before the session ends, generate a coverage report com
    bd list --status=open --json
    ```
    Combine results from both. `bd list --json` without flags only returns open tasks — do NOT rely on it alone.
-3. For each deliverable bullet in the plan, find the matching task(s) using **semantic/keyword matching**:
-   - A task matches if its title OR description contains the key nouns, file names, or function names from the deliverable bullet
+3. For each deliverable in the plan (each `###` heading under a `## Feature`; `- [ ]` checkboxes are acceptance criteria, not deliverables), find the matching task(s) using **semantic/keyword matching**:
+   - A task matches if its title OR description contains the key nouns, file names, or function names from the deliverable heading
    - Do NOT require exact title match — Cursor, Claude, and other agents may name tasks differently
    - If an Epic groups several deliverables, check child task descriptions too
    - When in doubt, match by file name: if a deliverable says "Create `hello.py`" and any closed task relates to creating `hello.py`, count it as matched
