@@ -35,6 +35,7 @@ ITERATION=0
 cleanup() {
     rm -f .beads/dolt-access.lock 2>/dev/null
     rm -f "$USAGE_LIMIT_FILE" 2>/dev/null
+    rm -f "$ENV_ERROR_FILE" 2>/dev/null
 }
 trap cleanup EXIT SIGTERM SIGINT
 
@@ -47,6 +48,15 @@ HEARTBEAT_FILE=$(mktemp /tmp/ralph-heartbeat-XXXXXX)
 # it from the stream and halt — re-running only burns more attempts.
 USAGE_LIMIT_FILE=$(mktemp /tmp/ralph-usagelimit-XXXXXX)
 
+# Flag file: set by parse_stream when the agent emits the RALPH_ENV_ERROR
+# sentinel. The agent runs as `claude -p` (headless) and CANNOT control its own
+# process exit code — it always exits 0 on completion. So "exit non-zero on
+# environment errors" is impossible for the agent to honour directly. Instead
+# the agent prints the sentinel and the loop detects it here, halting so the
+# user fixes the environment instead of re-running an identical failure every
+# iteration (e.g. AWS token expired, Docker OOM, missing tool).
+ENV_ERROR_FILE=$(mktemp /tmp/ralph-enverror-XXXXXX)
+
 # Parse stream-json: full output to log file, summaries to console
 parse_stream() {
     while IFS= read -r line; do
@@ -58,6 +68,15 @@ parse_stream() {
         case "$line" in
         *"reached your normal usage limit"* | *"out of usage"* | *"increase your limit to continue"* | *"usage limit"*)
             echo "LIMIT" >"$USAGE_LIMIT_FILE"
+            ;;
+        esac
+
+        # Detect the agent's environment-error sentinel. The agent cannot set
+        # its own exit code in headless mode, so it prints this marker and the
+        # loop halts in invoke_agent.
+        case "$line" in
+        *"RALPH_ENV_ERROR"*)
+            echo "ENV_ERROR" >"$ENV_ERROR_FILE"
             ;;
         esac
 
@@ -128,8 +147,9 @@ invoke_agent() {
     local prompt_file="$1"
     local rc_file=$(mktemp /tmp/ralph-rc-XXXXXX)
     date +%s >"$HEARTBEAT_FILE"
-    # Clear any usage-limit flag from a previous invocation before this run.
+    # Clear any usage-limit / env-error flag from a previous invocation.
     : >"$USAGE_LIMIT_FILE"
+    : >"$ENV_ERROR_FILE"
 
     # Run agent in background, capture its exit code to a file
     (
@@ -186,6 +206,22 @@ invoke_agent() {
         echo ""
         echo "Fix: ask your admin to raise the limit (or wait for the quota to"
         echo "reset), then re-launch ralph."
+        exit 6
+    fi
+
+    # If the agent flagged an environment error (RALPH_ENV_ERROR sentinel),
+    # halt the whole loop. The failure is identical every iteration (expired
+    # token, OOM, missing tool), so retrying only burns cost — the user must
+    # fix the host.
+    if [ -s "$ENV_ERROR_FILE" ]; then
+        echo ""
+        echo "════════════════════════════════════════"
+        echo "❌ ENVIRONMENT ERROR: Agent reported an unrecoverable environment problem"
+        echo "════════════════════════════════════════"
+        echo "The agent emitted RALPH_ENV_ERROR (e.g. expired AWS token, Docker"
+        echo "OOM, or a missing build tool). The loop cannot make progress."
+        echo ""
+        echo "Fix: resolve the environment issue reported above, then re-launch ralph."
         exit 6
     fi
 
@@ -374,9 +410,9 @@ while true; do
 
             protect_before
             invoke_agent "$BOOTSTRAP_FILE"
+            AGENT_EXIT_CODE=$?
             protect_after
 
-            AGENT_EXIT_CODE=$?
             if [ $AGENT_EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo "════════════════════════════════════════"
@@ -403,9 +439,9 @@ while true; do
 
             protect_before
             invoke_agent "$BOOTSTRAP_FILE"
+            AGENT_EXIT_CODE=$?
             protect_after
 
-            AGENT_EXIT_CODE=$?
             if [ $AGENT_EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo "════════════════════════════════════════"
@@ -529,9 +565,8 @@ while true; do
 
     protect_before
     invoke_agent "$DO_TASK_FILE"
-    protect_after
-
     AGENT_EXIT_CODE=$?
+    protect_after
 
     echo "---"
 
