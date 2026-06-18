@@ -73,10 +73,16 @@ parse_stream() {
 
         # Detect the agent's environment-error sentinel. The agent cannot set
         # its own exit code in headless mode, so it prints this marker and the
-        # loop halts in invoke_agent.
+        # loop halts in invoke_agent. Skip the prompt echo: some agents (e.g.
+        # Cursor) replay the full prompt as a "type":"user" event, and the
+        # prompt itself documents the token — matching it there would be a false
+        # positive. Only the agent's own output should count.
         case "$line" in
         *"RALPH_ENV_ERROR"*)
-            echo "ENV_ERROR" >"$ENV_ERROR_FILE"
+            case "$line" in
+            *'"type":"user"'* | *'"role":"user"'*) ;;
+            *) echo "ENV_ERROR" >"$ENV_ERROR_FILE" ;;
+            esac
             ;;
         esac
 
