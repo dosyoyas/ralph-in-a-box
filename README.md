@@ -165,6 +165,7 @@ All settings are environment variables:
 | `RALPH_IMAGE`                | `ralph-python:latest` | Docker image to use                                     |
 | `MAX_ITERATIONS`             | `50`                | Maximum loop iterations before stopping                   |
 | `MAX_COST`                   | `100.00`            | Maximum spend in USD (Claude only)                        |
+| `MAX_NO_PROGRESS`            | `2`                 | Halt after N consecutive iterations that exit 0 but produce no work (no edits/commits/closed task); releases stranded `in_progress` claims between attempts |
 | `ANTHROPIC_API_KEY`          | —                   | Claude auth (API key)                                     |
 | `CLAUDE_CODE_USE_BEDROCK`    | —                   | Set to `1` for AWS Bedrock (mounts `~/.aws` read-only)    |
 | `CURSOR_API_KEY`             | —                   | Cursor auth                                               |
@@ -208,7 +209,9 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 | `2`   | Blocked — manual intervention required |
 | `3`   | MAX_ITERATIONS reached                 |
 | `4`   | MAX_COST exceeded (Claude only)        |
+| `5`   | Finished with warnings (verify gaps or dirty workspace) |
 | `6`   | Environment error (AWS token expired, Docker OOM/unreachable, agent usage limit reached) |
+| `7`   | Halted — consecutive no-progress iterations (`MAX_NO_PROGRESS`); agent ran without error but produced no work (often a model that can't emit valid tool calls) |
 | other | Agent error                            |
 
 ## Agent Settings

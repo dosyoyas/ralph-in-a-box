@@ -18,6 +18,11 @@ VERIFY_FILE="${VERIFY_FILE:-/opt/ralph/VERIFY.md}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-50}"
 MAX_COST="${MAX_COST:-100.00}"
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-600}"  # Kill agent after N seconds of no output (default: 10min)
+# Halt after this many consecutive iterations that exit 0 but make no real
+# progress (no working-tree change, no task closed). Guards against a model
+# that claims a task and then no-ops the turn (e.g. a malformed tool call),
+# which would otherwise strand the claim and silently block all dependents.
+MAX_NO_PROGRESS="${MAX_NO_PROGRESS:-2}"
 
 # Use shared log directory and project name (set by ralph-in-a-box.sh) or fallback
 LOG_DIR="${RALPH_LOG_DIR:-/tmp}"
@@ -26,6 +31,9 @@ AGENT_PREFIX="${RALPH_AGENT}"
 LOG_FILE="${LOG_DIR}/${AGENT_PREFIX}_live_${PROJECT_NAME}.log"
 COST_FILE="${LOG_DIR}/${AGENT_PREFIX}_cost_${PROJECT_NAME}.txt"
 ITERATION_FILE="${LOG_DIR}/${AGENT_PREFIX}_iteration_${PROJECT_NAME}.txt"
+# Persists the count of consecutive no-progress iterations across the loop's
+# context resets (each iteration is a fresh agent invocation).
+NO_PROGRESS_FILE="${LOG_DIR}/${AGENT_PREFIX}_noprogress_${PROJECT_NAME}.txt"
 TOTAL_COST=0
 ITERATION=0
 
@@ -36,6 +44,7 @@ cleanup() {
     rm -f .beads/dolt-access.lock 2>/dev/null
     rm -f "$USAGE_LIMIT_FILE" 2>/dev/null
     rm -f "$ENV_ERROR_FILE" 2>/dev/null
+    rm -f "$MALFORMED_TOOLCALL_FILE" 2>/dev/null
 }
 trap cleanup EXIT SIGTERM SIGINT
 
@@ -56,6 +65,16 @@ USAGE_LIMIT_FILE=$(mktemp /tmp/ralph-usagelimit-XXXXXX)
 # user fixes the environment instead of re-running an identical failure every
 # iteration (e.g. AWS token expired, Docker OOM, missing tool).
 ENV_ERROR_FILE=$(mktemp /tmp/ralph-enverror-XXXXXX)
+
+# Flag file: set by parse_stream when an assistant text block contains the
+# tell-tale fragments of a malformed tool call (raw "<parameter ...>",
+# "<function ...>", "<tool_use ...>" markup, or the corrupt "=**message**="
+# pattern emitted by some quantized local builds). When a model serializes a
+# tool call as plain text, the harness never executes it: the turn ends
+# "successfully" (exit 0) having done nothing, which silently strands the
+# claimed task. The loop uses this only as an advisory signal feeding the
+# no-progress guard — it never halts on it directly.
+MALFORMED_TOOLCALL_FILE=$(mktemp /tmp/ralph-malformed-XXXXXX)
 
 # Parse stream-json: full output to log file, summaries to console
 parse_stream() {
@@ -93,6 +112,17 @@ parse_stream() {
             [ -n "$MSG" ] && echo "[TOOL] $MSG"
             TEXT=$(echo "$line" | jq -r '.message.content[]? | select(.type=="text") | .text' 2>/dev/null)
             [ -n "$TEXT" ] && echo "$TEXT"
+            # Detect a tool call that the model serialized as plain text instead
+            # of a structured tool_use (seen with some quantized local GGUF
+            # builds, e.g. "<parameter*=**message**=*>"). The harness can't
+            # execute it, so the turn does nothing yet still exits 0. Flag it as
+            # an advisory signal for the no-progress guard.
+            case "$TEXT" in
+            *"<parameter"* | *"<function"*"="* | *"<tool_use"* | *"=**message**="* | *"<｜tool▁call"*)
+                echo "[WARN] malformed tool-call markup in assistant text — likely a tool call emitted as plain text (no-op turn)"
+                echo "MALFORMED" >"$MALFORMED_TOOLCALL_FILE"
+                ;;
+            esac
             ;;
         tool_call)
             # Cursor Agent — dedicated tool_call events
@@ -153,9 +183,11 @@ invoke_agent() {
     local prompt_file="$1"
     local rc_file=$(mktemp /tmp/ralph-rc-XXXXXX)
     date +%s >"$HEARTBEAT_FILE"
-    # Clear any usage-limit / env-error flag from a previous invocation.
+    # Clear any usage-limit / env-error / malformed-tool-call flag from a
+    # previous invocation.
     : >"$USAGE_LIMIT_FILE"
     : >"$ENV_ERROR_FILE"
+    : >"$MALFORMED_TOOLCALL_FILE"
 
     # Run agent in background, capture its exit code to a file
     (
@@ -322,6 +354,33 @@ preflight_check() {
     fi
 }
 
+# A compact fingerprint of "did this iteration accomplish anything": current
+# commit, a hash of the working-tree status, and the number of closed tasks.
+# If this string is identical before and after an agent turn that exited 0,
+# the turn made no real progress (no edits, no commits, no task closed).
+progress_signature() {
+    local head status_hash closed
+    head=$(git rev-parse HEAD 2>/dev/null || echo "no-git")
+    status_hash=$(git status --porcelain 2>/dev/null | shasum 2>/dev/null | awk '{print $1}')
+    closed=$(bd list --status closed --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+    echo "${head}|${status_hash}|closed=${closed}"
+}
+
+# Release any task left in_progress back to open so a future iteration can
+# re-claim it. Used when an iteration makes no progress: a model that claims a
+# task and then no-ops the turn (e.g. a malformed tool call serialized as text)
+# would otherwise strand the claim, and every dependent task stays blocked.
+release_orphaned_tasks() {
+    local ids
+    ids=$(bd list --json 2>/dev/null | jq -r '[.[] | select(.status=="in_progress") | .id] | join(" ")' 2>/dev/null)
+    [ -z "$ids" ] && return 0
+    echo "↩️  Releasing stranded in_progress task(s) back to open: $ids"
+    local id
+    for id in $ids; do
+        bd update "$id" --status open >/dev/null 2>&1 || true
+    done
+}
+
 # Track elapsed time
 START_TIME=$(date +%s)
 elapsed() {
@@ -334,6 +393,7 @@ mkdir -p "$LOG_DIR"
 >"$LOG_FILE"
 echo "0" >"$COST_FILE"
 echo "0" >"$ITERATION_FILE"
+echo "0" >"$NO_PROGRESS_FILE"
 echo "Agent: $RALPH_AGENT"
 echo "Logs: $LOG_FILE"
 if [ "$RALPH_AGENT" = "claude" ]; then
@@ -549,6 +609,23 @@ while true; do
     READY_TASKS=$(bd ready --json 2>/dev/null | jq '[.[] | select(.title | test("^\\[impl\\]|^\\[test\\]|^\\[review\\]"))] | length' 2>/dev/null || echo "0")
 
     if [ "$READY_TASKS" = "0" ]; then
+        # Before giving up: a task stranded in_progress (e.g. an earlier crash,
+        # or a no-op turn whose claim wasn't released) makes its dependents
+        # unready and looks like a dead-end. Release any such orphan and retry,
+        # bounded by the no-progress counter so a task that can't progress can't
+        # loop forever.
+        IN_PROGRESS=$(bd list --json 2>/dev/null | jq -r '[.[] | select(.status=="in_progress") | .id] | join(" ")' 2>/dev/null)
+        NO_PROGRESS=$(cat "$NO_PROGRESS_FILE" 2>/dev/null || echo "0")
+        if [ -n "$IN_PROGRESS" ] && [ "$NO_PROGRESS" -lt "$MAX_NO_PROGRESS" ]; then
+            echo ""
+            echo "⚠️  No ready tasks, but task(s) stuck in_progress — releasing and retrying"
+            NO_PROGRESS=$((NO_PROGRESS + 1))
+            echo "$NO_PROGRESS" >"$NO_PROGRESS_FILE"
+            release_orphaned_tasks
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
         echo ""
         echo "════════════════════════════════════════"
         echo "⚠️  BLOCKED - No actionable tasks (only epics/deferred remain)"
@@ -569,6 +646,8 @@ while true; do
     >"$LOG_FILE"
     echo "=== Starting task $(date) ===" >>"$LOG_FILE"
 
+    PROGRESS_BEFORE=$(progress_signature)
+
     protect_before
     invoke_agent "$DO_TASK_FILE"
     AGENT_EXIT_CODE=$?
@@ -584,6 +663,47 @@ while true; do
         echo ""
         bd list
         exit $AGENT_EXIT_CODE
+    fi
+
+    # No-progress guard. A headless agent always exits 0, so exit code alone
+    # can't tell a productive turn from a no-op (e.g. a tool call the model
+    # serialized as plain text, which the harness never executes). The
+    # authoritative signal is a before/after fingerprint of the working tree +
+    # closed-task count: if it's unchanged, the turn did nothing. The
+    # malformed-tool-call flag is only a corroborating diagnostic — it never
+    # triggers the guard on its own (legitimate prose can mention "<tool_use>"),
+    # but the real bug always also shows up as no progress.
+    PROGRESS_AFTER=$(progress_signature)
+    NO_PROGRESS=$(cat "$NO_PROGRESS_FILE" 2>/dev/null || echo "0")
+    if [ "$PROGRESS_BEFORE" = "$PROGRESS_AFTER" ]; then
+        NO_PROGRESS=$((NO_PROGRESS + 1))
+        echo "$NO_PROGRESS" >"$NO_PROGRESS_FILE"
+        echo ""
+        echo "⚠️  NO PROGRESS this iteration ($NO_PROGRESS/$MAX_NO_PROGRESS) — no commits, no edits, no task closed"
+        [ -s "$MALFORMED_TOOLCALL_FILE" ] && echo "    likely cause: malformed tool-call markup in agent output (tool call emitted as plain text)"
+
+        # Release the stranded claim so the next iteration can re-attempt it
+        # instead of dead-ending on a permanently in_progress task.
+        release_orphaned_tasks
+
+        if [ "$NO_PROGRESS" -ge "$MAX_NO_PROGRESS" ]; then
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "❌ HALTED - $NO_PROGRESS consecutive no-progress iterations"
+            echo "════════════════════════════════════════"
+            echo "The agent ran without error but produced no work (no edits, no"
+            echo "commits, no task closed) $NO_PROGRESS times in a row. This usually means"
+            echo "the model cannot emit valid tool calls (common with some quantized"
+            echo "local builds) or is stuck re-reading context."
+            echo ""
+            echo "Fix: try a different model/build, or inspect $LOG_FILE."
+            echo ""
+            bd list
+            exit 7
+        fi
+    else
+        # Productive iteration — reset the streak.
+        echo "0" >"$NO_PROGRESS_FILE"
     fi
 
     sleep $CHECK_INTERVAL
