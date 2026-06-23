@@ -72,6 +72,11 @@ docker build -f rust/Dockerfile.rust -t ralph-rust:latest .
 
 ### 2. Create your plan
 
+The loop is only as good as the plan you feed it. **The single biggest lever on
+output quality is a well-aligned, unambiguous `ACTION_PLAN.md`** — see
+[Recommended: plan with the skills first](#recommended-plan-with-the-skills-first)
+for the workflow that produces one. The minimal hand-written form is:
+
 ```bash
 cat > /path/to/project/ACTION_PLAN.md << 'EOF'
 ## Feature 1: User Authentication
@@ -87,6 +92,40 @@ EOF
 ```
 
 Each `##` group becomes an Epic, each bullet becomes an `[impl]` task. Cross-group dependencies are supported.
+
+#### Recommended: plan with the skills first
+
+Before launching the loop, invest in the plan **interactively** (outside the
+container, in a normal Claude Code session). A sharp plan dramatically improves
+results — and it's what separates the models that finished our evaluations from
+the ones that stalled. Two skills ship in [`skills/`](skills/) for exactly this:
+
+1. **`grill-with-specs`** — a relentless interview that stress-tests your idea
+   decision-by-decision, surfaces hidden assumptions, and sharpens terminology.
+   It writes/updates `specs/` and a `specs/CONTEXT.md` glossary inline as
+   decisions crystallise, so the implementer later works from a precise, shared
+   vocabulary.
+2. **`action-plan`** — turns the grilled design into a well-formed
+   `ACTION_PLAN.md`: independently-grabbable, test-first **vertical slices**
+   (tracer bullets), grouped into features with explicit dependencies.
+
+Recommended sequence:
+
+```text
+grill-with-specs  →  action-plan  →  (review ACTION_PLAN.md)  →  ./ralph-in-a-box.sh
+```
+
+The grilling resolves ambiguity a weaker model would otherwise resolve *wrong*
+mid-loop; the action plan encodes the result as small, verifiable units the loop
+can land one at a time. Spending 20–30 minutes here is consistently worth more
+than any change to the loop itself.
+
+The skills live in [`skills/`](skills/). To use them, expose them to your Claude
+Code session (e.g. symlink or copy into `~/.claude/skills/`), then invoke
+`/grill-with-specs` followed by `/action-plan`. They run **outside** the loop —
+the container never needs them, so no ralph configuration changes are required.
+
+Both skills are based on [Matt Pocock's skills](https://github.com/mattpocock/skills).
 
 ### 3. Run
 
