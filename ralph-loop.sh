@@ -154,26 +154,51 @@ parse_stream() {
     done
 }
 
-# Watchdog: kills agent PID if no output for AGENT_TIMEOUT seconds
+# Recursively kill a process and all its descendants. The agent runs as a
+# subshell whose child is the CLI (e.g. `claude`), which may itself spawn
+# grandchildren; killing only direct children leaves grandchildren reparented
+# and alive. Walks the tree bottom-up via `pgrep -P` (portable across the Linux
+# container and macOS). $2 is the signal (default TERM).
+kill_tree() {
+    local pid=$1
+    local sig="${2:-TERM}"
+    local child
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        kill_tree "$child" "$sig"
+    done
+    kill "-$sig" "$pid" 2>/dev/null
+}
+
+# Watchdog: kills the agent (and its descendants) if no output for
+# AGENT_TIMEOUT seconds, then releases the stream reader so invoke_agent
+# can return.
+#
+# Takes BOTH pids because they are different processes: agent_pid is the agent
+# itself (e.g. `claude -p`), reader_pid is the parse_stream loop consuming its
+# output. The agent is what hangs (e.g. blocked on an unresponsive Ollama
+# before emitting a single token), so it is what must be killed — killing only
+# the reader would leave the agent running and the container alive forever.
+# pkill -P also reaps the agent's children (the real model/HTTP call lives in a
+# child of the subshell).
 start_watchdog() {
     local agent_pid=$1
-    (
-        while kill -0 "$agent_pid" 2>/dev/null; do
-            sleep 30
-            local last_beat=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo "0")
-            local now=$(date +%s)
-            local silent=$(( now - last_beat ))
-            if [ "$silent" -ge "$AGENT_TIMEOUT" ]; then
-                echo ""
-                echo "⚠️  WATCHDOG: Agent silent for ${silent}s (timeout: ${AGENT_TIMEOUT}s) — killing"
-                kill "$agent_pid" 2>/dev/null
-                sleep 2
-                kill -9 "$agent_pid" 2>/dev/null
-                break
-            fi
-        done
-    ) &
-    echo $!
+    local reader_pid=$2
+    while kill -0 "$agent_pid" 2>/dev/null; do
+        sleep 30
+        local last_beat=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo "0")
+        local now=$(date +%s)
+        local silent=$(( now - last_beat ))
+        if [ "$silent" -ge "$AGENT_TIMEOUT" ]; then
+            echo ""
+            echo "⚠️  WATCHDOG: Agent silent for ${silent}s (timeout: ${AGENT_TIMEOUT}s) — killing"
+            kill_tree "$agent_pid" TERM
+            sleep 2
+            kill_tree "$agent_pid" KILL
+            # Close the read side so the pipeline unblocks and invoke_agent returns.
+            kill "$reader_pid" 2>/dev/null
+            break
+        fi
+    done
 }
 
 # Invoke the selected agent with a prompt file
@@ -189,7 +214,19 @@ invoke_agent() {
     : >"$ENV_ERROR_FILE"
     : >"$MALFORMED_TOOLCALL_FILE"
 
-    # Run agent in background, capture its exit code to a file
+    # Run the agent and the stream parser as SEPARATE processes connected by a
+    # FIFO — not a shell pipeline. A pipeline (`agent | parse_stream &`) only
+    # exposes the reader's pid via $!, leaving no handle on the agent itself, so
+    # the watchdog could only ever kill the reader and the hung agent would
+    # survive. With an explicit FIFO we capture the agent's real pid and can
+    # kill it (and its children) when it stalls.
+    local fifo
+    fifo=$(mktemp -u /tmp/ralph-fifo-XXXXXX)
+    mkfifo "$fifo"
+
+    parse_stream <"$fifo" &
+    local reader_pid=$!
+
     (
         case "$RALPH_AGENT" in
         ollama)
@@ -220,16 +257,33 @@ invoke_agent() {
             ;;
         esac
         echo $? >"$rc_file"
-    ) 2>&1 | parse_stream &
-    local pipe_pid=$!
-    local watchdog_pid=$(start_watchdog "$pipe_pid")
+    ) >"$fifo" 2>&1 &
+    local agent_pid=$!
 
-    wait "$pipe_pid"
+    # Watchdog runs in the background (NOT in a command substitution, so its
+    # messages reach the log and it isn't killed by a closing $() pipe). It
+    # watches the agent and releases the reader if it has to kill a stalled one.
+    start_watchdog "$agent_pid" "$reader_pid" &
+    local watchdog_pid=$!
+
+    # Wait for the agent to finish (or be killed by the watchdog), then let the
+    # reader drain the FIFO before tearing the watchdog down.
+    wait "$agent_pid" 2>/dev/null
+    wait "$reader_pid" 2>/dev/null
     kill "$watchdog_pid" 2>/dev/null
     wait "$watchdog_pid" 2>/dev/null
+    rm -f "$fifo"
 
-    local rc=$(cat "$rc_file" 2>/dev/null || echo "1")
+    # The subshell writes its exit code to rc_file as its last act. If the
+    # watchdog killed a stalled agent, that line never ran and rc_file is empty
+    # (or absent) — treat that as a timeout (124, the conventional code) rather
+    # than letting an empty value break `return "$rc"` downstream.
+    local rc
+    rc=$(cat "$rc_file" 2>/dev/null || echo "")
     rm -f "$rc_file"
+    case "$rc" in
+    ''|*[!0-9]*) rc=124 ;;
+    esac
 
     # If the agent reported an account usage/quota limit, halt the whole loop.
     # Retrying only burns more attempts against an exhausted account; the user
