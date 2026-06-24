@@ -309,12 +309,13 @@ MAX_RETRIES: 2 (default)
 6. **EXIT AFTER TASK** — Let bash loop handle next iteration
 7. **NO PLACEHOLDERS** — Full implementations only
 8. **NEVER DELETE** `AGENTS.md`, `specs/`, or `ACTION_PLAN.md` — these are managed by the loop
-9. **FAIL FAST ON ENVIRONMENT ERRORS** — If you encounter any of these errors, do NOT create a BLOCKED task. Instead, leave the current task open (unclaimed) and print the exact token `RALPH_ENV_ERROR` on its own line, then stop. You run headless and CANNOT set your own process exit code — the loop watches for this token in your output and halts the whole run when it sees it.
+9. **FAIL FAST ON ENVIRONMENT ERRORS** — If you encounter any of these errors, do NOT create a BLOCKED task. Instead, leave the current task open (unclaimed) and, **as your final output on its own line**, print the token followed by a one-line reason in this exact form: `RALPH_ENV_ERROR: <concise reason — include the failing command and the key error text>`. Then stop. You run headless and CANNOT set your own process exit code — the loop watches for this token in your output and halts the whole run when it sees it. The reason is shown to the user, so make it specific.
    - AWS SSO/token expired (`TokenRetrievalError`, `InvalidGrantException`, `ExpiredTokenException`)
    - Docker OOM kill (exit code 137)
    - Docker daemon unreachable
+   - beads/Dolt database faults (e.g. `Error 1105`, schema/column errors from `bd`)
    - Network/auth failures that are not code bugs
-   These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup. Do NOT print `RALPH_ENV_ERROR` for ordinary test failures or code bugs — only for unrecoverable environment problems.
+   Example: `RALPH_ENV_ERROR: bd close failed with "Error 1105: column depends_on_id could not be found" — beads/Dolt schema fault`. These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup. Do NOT print `RALPH_ENV_ERROR` for ordinary test failures or code bugs — only for unrecoverable environment problems. When you write the reason, it is fine that the token appears in your final text; print it as a standalone line, not buried mid-sentence.
 10. **STRICT SCOPE** — Only modify/create files listed in ACTION_PLAN "Files to touch". Do NOT:
     - Refactor existing code that works and is not required by the task
     - Create documentation files (*.md) unless the plan explicitly requests them

@@ -45,6 +45,7 @@ cleanup() {
     rm -f "$USAGE_LIMIT_FILE" 2>/dev/null
     rm -f "$ENV_ERROR_FILE" 2>/dev/null
     rm -f "$MALFORMED_TOOLCALL_FILE" 2>/dev/null
+    rm -f "$LAST_TOOL_ERROR_FILE" 2>/dev/null
 }
 trap cleanup EXIT SIGTERM SIGINT
 
@@ -75,6 +76,12 @@ ENV_ERROR_FILE=$(mktemp /tmp/ralph-enverror-XXXXXX)
 # claimed task. The loop uses this only as an advisory signal feeding the
 # no-progress guard — it never halts on it directly.
 MALFORMED_TOOLCALL_FILE=$(mktemp /tmp/ralph-malformed-XXXXXX)
+
+# Flag file: holds the text of the most recent failing tool_result this
+# iteration. A tool error (e.g. a beads/Dolt schema fault, a missing module) is
+# usually what triggers an env-error bail-out, so the banner shows it as the
+# likely trigger even when the model's own explanation is thin.
+LAST_TOOL_ERROR_FILE=$(mktemp /tmp/ralph-toolerr-XXXXXX)
 
 # Parse stream-json: full output to log file, summaries to console
 parse_stream() {
@@ -107,13 +114,31 @@ parse_stream() {
         # in an assistant text block — not as a substring of prose.
         case "$line" in
         *'"type":"user"'* | *'"role":"user"'* | *'"type":"thinking"'* | *'"thinking":"'*) ;;
-        *'"RALPH_ENV_ERROR"'* | *'"RALPH_ENV_ERROR\n'* | *'\nRALPH_ENV_ERROR"'* | *'\nRALPH_ENV_ERROR\n'*)
-            echo "ENV_ERROR" >"$ENV_ERROR_FILE"
+        *'"RALPH_ENV_ERROR"'* | *'"RALPH_ENV_ERROR\n'* | *'\nRALPH_ENV_ERROR"'* | *'\nRALPH_ENV_ERROR\n'* | *'"RALPH_ENV_ERROR: '* | *'\nRALPH_ENV_ERROR: '*)
+            # Capture the reason the model gave (the "RALPH_ENV_ERROR: <reason>"
+            # line, or the whole accompanying text block) so the banner can show
+            # *why* it gave up instead of a bare token.
+            local reason
+            reason=$(echo "$line" | jq -r '.message.content[]? | select(.type=="text") | .text' 2>/dev/null \
+                | grep -m1 "RALPH_ENV_ERROR" | sed 's/.*RALPH_ENV_ERROR:* *//' )
+            echo "${reason:-(model gave no reason)}" >"$ENV_ERROR_FILE"
             ;;
         esac
 
         TYPE=$(echo "$line" | jq -r '.type // empty' 2>/dev/null)
         case "$TYPE" in
+        user)
+            # Surface failing tool results on the console (they are otherwise
+            # invisible — only [TOOL] calls and assistant text are shown). A
+            # tool error is almost always what triggers an env-error bail-out,
+            # so showing it live is what lets the user see *why*. Also stash the
+            # most recent one for the env-error banner.
+            ERR=$(echo "$line" | jq -r '.message.content[]? | select(.type=="tool_result" and .is_error==true) | (.content | if type=="array" then (map(.text//"") | join(" ")) else tostring end)' 2>/dev/null)
+            if [ -n "$ERR" ] && [ "$ERR" != "null" ]; then
+                echo "[TOOL-ERROR] $(echo "$ERR" | head -c 400)"
+                echo "$ERR" >"$LAST_TOOL_ERROR_FILE"
+            fi
+            ;;
         assistant)
             MSG=$(echo "$line" | jq -r '.message.content[]? | select(.type=="tool_use") | "\(.name): \(.input | tostring | .[0:80])..."' 2>/dev/null)
             [ -n "$MSG" ] && echo "[TOOL] $MSG"
@@ -220,6 +245,7 @@ invoke_agent() {
     : >"$USAGE_LIMIT_FILE"
     : >"$ENV_ERROR_FILE"
     : >"$MALFORMED_TOOLCALL_FILE"
+    : >"$LAST_TOOL_ERROR_FILE"
 
     # Run the agent and the stream parser as SEPARATE processes connected by a
     # FIFO — not a shell pipeline. A pipeline (`agent | parse_stream &`) only
@@ -313,14 +339,26 @@ invoke_agent() {
     # token, OOM, missing tool), so retrying only burns cost — the user must
     # fix the host.
     if [ -s "$ENV_ERROR_FILE" ]; then
+        local env_reason last_err
+        env_reason=$(cat "$ENV_ERROR_FILE" 2>/dev/null)
+        last_err=$(cat "$LAST_TOOL_ERROR_FILE" 2>/dev/null)
         echo ""
         echo "════════════════════════════════════════"
         echo "❌ ENVIRONMENT ERROR: Agent reported an unrecoverable environment problem"
         echo "════════════════════════════════════════"
-        echo "The agent emitted RALPH_ENV_ERROR (e.g. expired AWS token, Docker"
-        echo "OOM, or a missing build tool). The loop cannot make progress."
+        echo "The agent emitted RALPH_ENV_ERROR and stopped. The loop cannot make"
+        echo "progress until the underlying problem is fixed."
         echo ""
-        echo "Fix: resolve the environment issue reported above, then re-launch ralph."
+        echo "Reason given by the agent:"
+        echo "  ${env_reason:-(none — model printed the bare token)}"
+        if [ -n "$last_err" ]; then
+            echo ""
+            echo "Last failing tool output (likely trigger):"
+            echo "$last_err" | head -c 800 | sed 's/^/  /'
+            echo ""
+        fi
+        echo ""
+        echo "Fix: resolve the issue above, then re-launch ralph."
         exit 6
     fi
 
