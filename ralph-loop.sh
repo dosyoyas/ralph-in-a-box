@@ -92,16 +92,23 @@ parse_stream() {
 
         # Detect the agent's environment-error sentinel. The agent cannot set
         # its own exit code in headless mode, so it prints this marker and the
-        # loop halts in invoke_agent. Skip the prompt echo: some agents (e.g.
-        # Cursor) replay the full prompt as a "type":"user" event, and the
-        # prompt itself documents the token — matching it there would be a false
-        # positive. Only the agent's own output should count.
+        # loop halts in invoke_agent.
+        #
+        # Two false-positive sources, both excluded:
+        #   1. Prompt echo — some agents replay the prompt as a "type":"user"
+        #      event, and the prompt documents the token.
+        #   2. The model *citing* the token while reasoning about it (e.g.
+        #      gemma4's thinking: "print the exact token `RALPH_ENV_ERROR` on
+        #      its own line"). Reasoning lives in "thinking" blocks and quotes
+        #      the token inline (backticks, mid-sentence).
+        # So: skip user/thinking lines entirely, and otherwise require the token
+        # to appear as an isolated JSON string value or alone on its own line
+        # ("\n…\n"), which is how a genuine emission ("on its own line") arrives
+        # in an assistant text block — not as a substring of prose.
         case "$line" in
-        *"RALPH_ENV_ERROR"*)
-            case "$line" in
-            *'"type":"user"'* | *'"role":"user"'*) ;;
-            *) echo "ENV_ERROR" >"$ENV_ERROR_FILE" ;;
-            esac
+        *'"type":"user"'* | *'"role":"user"'* | *'"type":"thinking"'* | *'"thinking":"'*) ;;
+        *'"RALPH_ENV_ERROR"'* | *'"RALPH_ENV_ERROR\n'* | *'\nRALPH_ENV_ERROR"'* | *'\nRALPH_ENV_ERROR\n'*)
+            echo "ENV_ERROR" >"$ENV_ERROR_FILE"
             ;;
         esac
 
