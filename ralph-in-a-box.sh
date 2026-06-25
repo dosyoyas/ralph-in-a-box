@@ -143,6 +143,24 @@ codex)
     ;;
 esac
 
+# Optional SSH config mount. The whole ~/.ssh is mounted below, but if the
+# host's ~/.ssh/config is a symlink (e.g. into a dotfiles repo) it dangles
+# inside the container, so ssh can't learn per-host IdentityFile mappings and
+# pushes fail when keys have non-default names. Set RALPH_SSH_CONFIG to a
+# config file on the host and it is mounted (symlink resolved) at
+# /root/.ssh/config. Unset → nothing changes, behaviour is unchanged.
+RALPH_SSH_ARGS=()
+if [ -n "$RALPH_SSH_CONFIG" ]; then
+    _ssh_cfg=$(cd "$(dirname "$RALPH_SSH_CONFIG")" 2>/dev/null && echo "$(pwd)/$(basename "$RALPH_SSH_CONFIG")")
+    # Resolve a symlink to its real target so the mount has actual content.
+    [ -L "$_ssh_cfg" ] && _ssh_cfg=$(readlink -f "$_ssh_cfg" 2>/dev/null || python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$_ssh_cfg")
+    if [ -f "$_ssh_cfg" ]; then
+        RALPH_SSH_ARGS+=(-v "$_ssh_cfg:/root/.ssh/config:ro")
+    else
+        echo "Warning: RALPH_SSH_CONFIG set but not a readable file: $RALPH_SSH_CONFIG" >&2
+    fi
+fi
+
 echo "=== Ralph Container Launch ==="
 echo "Agent:      $RALPH_AGENT"
 echo "Workspace:  $WORKSPACE"
@@ -167,6 +185,8 @@ docker run $DOCKER_TTY_FLAGS --rm \
     `# Git config and SSH keys for push (read-only)` \
     -v "$HOME/.gitconfig:/root/.gitconfig:ro" \
     -v "$HOME/.ssh:/root/.ssh:ro" \
+    `# Optional: real SSH config when the host's is a symlink (RALPH_SSH_CONFIG)` \
+    "${RALPH_SSH_ARGS[@]}" \
     \
     `# Shared log directory for host monitoring` \
     -v "$LOG_DIR:$LOG_DIR" \
