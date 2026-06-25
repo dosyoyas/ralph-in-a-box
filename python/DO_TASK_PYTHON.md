@@ -313,9 +313,10 @@ MAX_RETRIES: 2 (default)
    - AWS SSO/token expired (`TokenRetrievalError`, `InvalidGrantException`, `ExpiredTokenException`)
    - Docker OOM kill (exit code 137)
    - Docker daemon unreachable
-   - beads/Dolt database faults (e.g. `Error 1105`, schema/column errors from `bd`)
    - Network/auth failures that are not code bugs
-   Example: `RALPH_ENV_ERROR: bd close failed with "Error 1105: column depends_on_id could not be found" — beads/Dolt schema fault`. These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup. Do NOT print `RALPH_ENV_ERROR` for ordinary test failures or code bugs — only for unrecoverable environment problems. When you write the reason, it is fine that the token appears in your final text; print it as a standalone line, not buried mid-sentence.
+   Example: `RALPH_ENV_ERROR: docker build failed — Cannot connect to the Docker daemon`. These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup. Do NOT print `RALPH_ENV_ERROR` for ordinary test failures or code bugs — only for unrecoverable environment problems. When you write the reason, it is fine that the token appears in your final text; print it as a standalone line, not buried mid-sentence.
+
+   **NOT an environment error — do NOT bail:** `bd` may print a warning like `Error 1105: column "depends_on_id" could not be found ... Error checking blockers` while still **succeeding** (it exits 0 and the command takes effect — e.g. `bd close` still closes the issue). This is a benign blocker-check warning on stderr, not a failure. **Judge `bd` by its exit code, not by stderr text.** If the exit code is 0, proceed normally; never emit `RALPH_ENV_ERROR` for it.
 10. **STRICT SCOPE** — Only modify/create files listed in ACTION_PLAN "Files to touch". Do NOT:
     - Refactor existing code that works and is not required by the task
     - Create documentation files (*.md) unless the plan explicitly requests them
