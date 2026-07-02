@@ -454,15 +454,32 @@ preflight_check() {
 }
 
 # A compact fingerprint of "did this iteration accomplish anything": current
-# commit, a hash of the working-tree status, and the number of closed tasks.
+# commit, a CONTENT hash of the working tree, and the total task count.
 # If this string is identical before and after an agent turn that exited 0,
-# the turn made no real progress (no edits, no commits, no task closed).
+# the turn made no real progress (no edits, no commits, no task created/closed).
+#
+# Notes on why each component is what it is:
+#  - We hash `git diff HEAD` (tracked content) + the list of untracked files,
+#    NOT `git status --porcelain`. Porcelain is content-blind: editing an
+#    already-modified file a second time leaves the same ` M path` line, so a
+#    real edit during the multi-sibling [impl] phase (which edits but does not
+#    commit until [review]) would look like no progress. The diff hash changes
+#    whenever file *content* changes.
+#  - We hash the full set of (id, status) pairs from `bd list --all --json`,
+#    NOT a task count. A count is not a reliable signal: `bd list --json`
+#    returns open tasks only (flat when a [test] turn closes its task and opens
+#    the next), and even a closed-count can miss a productive turn that only
+#    reopens or reprioritises. A phase transition (create / close / reopen)
+#    always changes the id→status map, so its hash moves whenever the task graph
+#    advances — exactly the "did a phase complete" signal we want. `--all`
+#    includes closed issues (the default filter hides them).
 progress_signature() {
-    local head status_hash closed
+    local head diff_hash untracked tasks
     head=$(git rev-parse HEAD 2>/dev/null || echo "no-git")
-    status_hash=$(git status --porcelain 2>/dev/null | shasum 2>/dev/null | awk '{print $1}')
-    closed=$(bd list --status closed --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
-    echo "${head}|${status_hash}|closed=${closed}"
+    diff_hash=$(git diff HEAD 2>/dev/null | shasum 2>/dev/null | awk '{print $1}')
+    untracked=$(git ls-files --others --exclude-standard 2>/dev/null | shasum 2>/dev/null | awk '{print $1}')
+    tasks=$(bd list --all --json 2>/dev/null | jq -S -r '[.[] | "\(.id):\(.status)"] | sort | join(",")' 2>/dev/null | shasum 2>/dev/null | awk '{print $1}')
+    echo "${head}|${diff_hash}|${untracked}|tasks=${tasks}"
 }
 
 # Release any task left in_progress back to open so a future iteration can
@@ -778,7 +795,7 @@ while true; do
         NO_PROGRESS=$((NO_PROGRESS + 1))
         echo "$NO_PROGRESS" >"$NO_PROGRESS_FILE"
         echo ""
-        echo "⚠️  NO PROGRESS this iteration ($NO_PROGRESS/$MAX_NO_PROGRESS) — no commits, no edits, no task closed"
+        echo "⚠️  NO PROGRESS this iteration ($NO_PROGRESS/$MAX_NO_PROGRESS) — no commits, no edits, no task change"
         [ -s "$MALFORMED_TOOLCALL_FILE" ] && echo "    likely cause: malformed tool-call markup in agent output (tool call emitted as plain text)"
 
         # Release the stranded claim so the next iteration can re-attempt it
