@@ -16,6 +16,15 @@ it, and a downstream process turns it into whatever task structure it needs. The
 command is agnostic about that downstream — its only contract is the
 `ACTION_PLAN.md` format below.
 
+**Assume the reader is an autonomous agent with no prior context.** The agent
+that implements each deliverable will not have seen the source plan, this
+conversation, or the reasoning behind any decision. It reads one `###` block and
+must be able to act on it alone. So err toward being exhaustive and explicit:
+spell out the intended behavior, the constraints, the domain terms, and anything
+non-obvious a fresh agent would otherwise have to guess. When in doubt, state it
+rather than assume it is understood. This favors completeness over brevity —
+redundancy across deliverables is acceptable if it keeps each one self-contained.
+
 ## Process
 
 ### 1. Gather context
@@ -119,7 +128,7 @@ it came from a prototype. Trim to the decision-rich parts.}
 - **`## Feature N:` per feature group.** One heading per logical cluster.
 - **`### Title` per deliverable.** Each deliverable is one `###` sub-heading under its feature. This is the unit a downstream process counts — keep one slice per heading.
 - **Acceptance criteria are `- [ ]` checkboxes** expressed as testable end-to-end behaviors (given/when/then), so each one maps directly to a failing test the implementer writes first. Describe observable outcomes, not implementation tasks. Stay at the end-to-end/acceptance level — do not enumerate unit tests; those are the implementer's call. Derive criteria from the plan's language; if the plan is too vague to derive concrete behaviors, copy the deliverable verbatim as a single criterion rather than inventing specifics.
-- **Self-contained deliverables.** Each `###` block must carry enough context to be implemented without re-reading the source plan.
+- **Self-contained deliverables.** Each `###` block must carry enough context to be implemented by an autonomous agent that has never seen the source plan, this conversation, or the other deliverables. Be exhaustive and explicit: describe the intended behavior fully, name the relevant domain terms, and call out constraints, edge cases, and assumptions a fresh agent would otherwise have to guess. Repeating context that also appears in another deliverable is fine — each block stands alone.
 - **Preserve plan language.** Copy requirements verbatim into descriptions and criteria where possible.
 - **File paths as hints, not constraints.** Mention existing files as starting points only; don't invent paths.
 </format-rules>
