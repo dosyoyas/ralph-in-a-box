@@ -142,6 +142,18 @@ parse_stream() {
         assistant)
             MSG=$(echo "$line" | jq -r '.message.content[]? | select(.type=="tool_use") | "\(.name): \(.input | tostring | .[0:80])..."' 2>/dev/null)
             [ -n "$MSG" ] && echo "[TOOL] $MSG"
+            # Cursor (run with --stream-partial-output) emits each text delta as
+            # its own assistant event AND, at the end of the block, a single
+            # consolidated assistant event carrying the whole message. Printing
+            # both duplicates every message — once char-by-char, once whole. The
+            # consolidated event is the only one that carries "model_call_id", so
+            # for cursor we skip the partial fragments and print only the join.
+            # Other agents (claude/codex/ollama) emit whole blocks with no
+            # "model_call_id", so this gate never suppresses their output.
+            if [ "$RALPH_AGENT" = "cursor" ] \
+                && [ "$(echo "$line" | jq -r 'has("model_call_id")' 2>/dev/null)" != "true" ]; then
+                continue
+            fi
             TEXT=$(echo "$line" | jq -r '.message.content[]? | select(.type=="text") | .text' 2>/dev/null)
             [ -n "$TEXT" ] && echo "$TEXT"
             # Detect a tool call that the model serialized as plain text instead
