@@ -14,13 +14,13 @@ You are an ORCHESTRATOR AND WORKER running inside a bash loop. Each iteration ex
 ```
 Plan mode → Epic + [impl] task
      ↓
-┌─────────────────────────────────────────┐
-│ Bash Loop (ralph-loop.sh)                │
-├─────────────────────────────────────────┤
-│ Iteration 1: [impl]   → creates [test]  │
-│ Iteration 2: [test]   → creates [review]│
-│ Iteration 3: [review] → commits, closes │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│ Bash Loop (ralph-loop.sh)                  │
+├───────────────────────────────────────────┤
+│ Iteration 1: [impl]   → creates [review]  │
+│ Iteration 2: [review] → creates [test]    │
+│ Iteration 3: [test]   → commits, closes   │
+└───────────────────────────────────────────┘
 ```
 
 Context travels in task descriptions between iterations.
@@ -30,9 +30,9 @@ You have all tools available: Bash, Read, Edit, Write, Glob, Grep.
 
 | Prefix     | On Success            | On Failure              |
 | ---------- | --------------------- | ----------------------- |
-| `[impl]`   | Record files; last sibling creates `[test]` | Report blocker             |
-| `[test]`   | Create `[review]`                           | Create `[impl] RETRY` task |
-| `[review]` | Commit + close Epic   | Reopen `[test]` w/error |
+| `[impl]`   | Record files; last sibling creates `[review]` | Report blocker             |
+| `[review]` | Create `[test]`                               | Reopen `[impl]` w/error    |
+| `[test]`   | Commit + close Epic   | Create `[impl] RETRY` task |
 
 ---
 
@@ -100,25 +100,10 @@ Exit immediately. Let the bash loop handle the next iteration.
 
 1. Record files: `bd update <id> --notes "FILES MODIFIED: <list>"`
 2. Check for remaining open `[impl]` siblings in the Epic:
-   - **If siblings remain:** close this task and exit — do NOT create a `[test]` task
-   - **If this is the last `[impl]`:** collect `FILES MODIFIED` notes from all siblings, then create a single `[test]` task for the whole Epic
+   - **If siblings remain:** close this task and exit — do NOT create a `[review]` task
+   - **If this is the last `[impl]`:** collect `FILES MODIFIED` notes from all siblings, then create a single `[review]` task for the whole Epic
 
-### [test] — Test
-
-1. Read the files listed in the task description
-2. Run the project test suite:
-    ```bash
-    python -m pytest -v 2>&1
-    ```
-3. Capture and truncate output:
-   - **On pass:** store only the summary line(s) (e.g. `5 passed in 1.2s`). Discard all other output.
-   - **On failure:** store only failing test names, `FAILED`/`ERROR` sections, and tracebacks. Truncate to last 100 lines. Discard Docker build logs.
-
-**If all tests pass:** create `[review]` task with files list + summary + test summary line only.
-
-**If tests fail:** create a new `[impl] RETRY` task (do not reopen a specific `[impl]`) with parsed failure output. Increment RETRY counter.
-
-### [review] — Simplify, Lint, and Commit
+### [review] — Simplify and Lint
 
 1. Read the files listed in the task description
 2. **Simplify:** You are an expert code simplification specialist focused on enhancing code clarity, consistency, and maintainability while preserving exact functionality. Apply refinements that:
@@ -135,24 +120,39 @@ Exit immediately. Let the bash loop handle the next iteration.
     biome ci <js/ts files>                   # only if JS/TS files were modified
     /usr/local/bin/gitleaks detect -v
     ```
-    **If gitleaks finds secrets:** remove them from the code immediately. Use environment variables or config files listed in `.gitignore` instead. Do NOT proceed to commit until gitleaks passes clean.
+    **If gitleaks finds secrets:** remove them from the code immediately. Use environment variables or config files listed in `.gitignore` instead.
 4. Fix any lint issues found.
-5. **Re-run tests only if** at least one file was modified during steps 2–4. If no files changed, skip the test re-run and proceed to commit.
-6. **Commit:**
+5. Create a `[test]` task with the files list + summary. Do NOT commit — tests haven't run yet.
+
+**If code review fails (unfixable lint/gitleaks issue):** reopen `[impl]` task with error context.
+
+### [test] — Test and Commit
+
+1. Read the files listed in the task description
+2. Run the project test suite:
+    ```bash
+    python -m pytest -v 2>&1
+    ```
+3. Capture and truncate output:
+   - **On pass:** store only the summary line(s) (e.g. `5 passed in 1.2s`). Discard all other output.
+   - **On failure:** store only failing test names, `FAILED`/`ERROR` sections, and tracebacks. Truncate to last 100 lines. Discard Docker build logs.
+
+**If tests fail:** create a new `[impl] RETRY` task (do not reopen a specific `[impl]`) with parsed failure output. Increment RETRY counter. The retry goes through `[impl] → [review] → [test]` again — the fix needs its own simplify/lint pass before it can commit.
+
+**If all tests pass:**
+
+1. **Commit:**
     ```bash
     git add <files>
     git commit -m "type(scope): description"
     ```
-7. Check if all sibling tasks under the Epic are closed.
+2. Check if all sibling tasks under the Epic are closed.
    If no: leave the Epic open.
    If yes: close the Epic, then sync with remote **only if a remote is already configured**:
     ```bash
     git remote | grep -q . && git pull --rebase && git push && git status
     ```
     **IMPORTANT:** First run `git remote`. If the output is empty, skip the pull/push entirely — do NOT create a remote, do NOT add an origin. The loop handles the push. If a remote exists and push fails (e.g. conflict), resolve and retry.
-
-**If code review fails:** reopen `[impl]` task with error context.
-**If tests break after simplification:** reopen `[test]` task with error context.
 
 ---
 
@@ -164,11 +164,11 @@ Exit immediately. Let the bash loop handle the next iteration.
 # Step 1: Record modified files on the current task
 bd update {IMPL_TASK_ID} --notes "FILES MODIFIED: {list of files}"
 
-# Step 2a: If open [impl] siblings remain — close and exit (no [test] task)
+# Step 2a: If open [impl] siblings remain — close and exit (no [review] task)
 bd close {IMPL_TASK_ID} --reason "Implementation complete; awaiting sibling [impl] tasks"
 
-# Step 2b: If this is the last [impl] — collect all FILES MODIFIED notes, then create [test]
-bd create "[test] Test: {EPIC_TITLE}" \
+# Step 2b: If this is the last [impl] — collect all FILES MODIFIED notes, then create [review]
+bd create "[review] Review: {EPIC_TITLE}" \
   --parent {EPIC_ID} \
   --type task \
   --priority 0 \
@@ -182,13 +182,13 @@ IMPLEMENTATION SUMMARY:
 RETRY: 0
 EOF
 )"
-bd close {IMPL_TASK_ID} --reason "Implementation complete; [test] task created"
+bd close {IMPL_TASK_ID} --reason "Implementation complete; [review] task created"
 ```
 
-### After [test] success → Create [review]
+### After [review] success → Create [test]
 
 ```bash
-bd create "[review] Review: {ORIGINAL_TITLE}" \
+bd create "[test] Test: {ORIGINAL_TITLE}" \
   --parent {EPIC_ID} \
   --type task \
   --priority 0 \
@@ -198,8 +198,6 @@ FILES:
 
 SUMMARY:
 {impl summary}
-
-TESTS: {passed}/{total} passing
 
 RETRY: 0
 EOF
@@ -231,13 +229,13 @@ EOF
 bd close {TEST_TASK_ID} --reason "Tests failed; [impl] RETRY task created"
 ```
 
-### After [review] failure → Reopen [test]
+### After [review] failure → Reopen [impl]
 
 ```bash
-bd update {TEST_TASK_ID} --status open
-bd update {TEST_TASK_ID} --notes "RETRY: {N+1}
+bd update {IMPL_TASK_ID} --status open
+bd update {IMPL_TASK_ID} --notes "RETRY: {N+1}
 
-ISSUE AFTER SIMPLIFICATION:
+ISSUE FOUND DURING REVIEW:
 {error or lint issues}"
 ```
 

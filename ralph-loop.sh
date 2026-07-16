@@ -475,7 +475,7 @@ preflight_check() {
 #    NOT `git status --porcelain`. Porcelain is content-blind: editing an
 #    already-modified file a second time leaves the same ` M path` line, so a
 #    real edit during the multi-sibling [impl] phase (which edits but does not
-#    commit until [review]) would look like no progress. The diff hash changes
+#    commit until [test]) would look like no progress. The diff hash changes
 #    whenever file *content* changes.
 #  - We hash the full set of (id, status) pairs from `bd list --all --json`,
 #    NOT a task count. A count is not a reliable signal: `bd list --json`

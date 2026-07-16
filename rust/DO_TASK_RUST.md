@@ -17,9 +17,9 @@ Plan mode → Epic + [impl] task
 ┌─────────────────────────────────────────┐
 │ Bash Loop (ralph-loop.sh)                │
 ├─────────────────────────────────────────┤
-│ Iteration 1: [impl]   → creates [test]  │
-│ Iteration 2: [test]   → creates [review]│
-│ Iteration 3: [review] → commits, closes │
+│ Iteration 1: [impl]   → creates [review]│
+│ Iteration 2: [review] → creates [test]  │
+│ Iteration 3: [test]   → commits, closes │
 └─────────────────────────────────────────┘
 ```
 
@@ -30,9 +30,9 @@ You have all tools available: Bash, Read, Edit, Write, Glob, Grep.
 
 | Prefix     | On Success            | On Failure              |
 | ---------- | --------------------- | ----------------------- |
-| `[impl]`   | Create `[test]` child | Report blocker          |
-| `[test]`   | Create `[review]`     | Create `[impl] RETRY`   |
-| `[review]` | Commit + close Epic   | Reopen `[test]` w/error |
+| `[impl]`   | Create `[review]` child | Report blocker          |
+| `[review]` | Create `[test]`         | Reopen `[impl]` w/error |
+| `[test]`   | Commit + close Epic     | Create `[impl] RETRY`   |
 
 ---
 
@@ -100,10 +100,35 @@ Exit immediately. Let the bash loop handle the next iteration.
     bd update <id> --notes "FILES MODIFIED: <list>"
     ```
 2. Check for remaining open `[impl]` siblings in the Epic:
-   - If siblings remain: close this task and exit — do NOT create a `[test]` task
-   - If this is the last `[impl]`: collect `FILES MODIFIED` notes from all siblings, then create a single `[test]` task for the whole Epic with the combined file list and a brief summary
+   - If siblings remain: close this task and exit — do NOT create a `[review]` task
+   - If this is the last `[impl]`: collect `FILES MODIFIED` notes from all siblings, then create a single `[review]` task for the whole Epic with the combined file list and a brief summary
 
-### [test] — Test
+### [review] — Simplify and Lint
+
+1. Read the files listed in the task description
+2. **Simplify:** You are an expert code simplification specialist focused on enhancing code clarity, consistency, and maintainability while preserving exact functionality. Apply refinements that:
+    1. PRESERVE FUNCTIONALITY — never change what the code does, only how it does it
+    2. ENHANCE CLARITY — reduce unnecessary complexity and nesting, eliminate redundant abstractions, improve variable and function names
+    3. MAINTAIN BALANCE — avoid over-simplification; explicit code is often better than overly compact code
+    4. KEEP SCOPE — only touch the files listed in the task description
+3. **Lint:** Scope to the crate(s) containing the modified files (use `-p <crate>` if in a workspace):
+    ```bash
+    cargo fmt --all --check 2>&1
+    cargo clippy -p <crate> --all-targets --all-features -- -D warnings -W clippy::cargo -A clippy::multiple_crate_versions 2>&1
+    /usr/local/bin/gitleaks detect -v
+    ```
+    **If gitleaks finds secrets:** remove them from the code immediately. Use environment variables or config files listed in `.gitignore` instead.
+    > If the project does not use feature flags, omit `--all-features`.
+4. Fix any format or clippy issues found.
+    ```bash
+    cargo fmt --all
+    ```
+    For clippy issues, fix the code directly, do NOT suppress warnings with `#[allow(...)]`.
+5. Create a `[test]` task with the files list + summary. Do NOT commit — tests haven't run yet.
+
+**If code review fails (unfixable lint/gitleaks issue):** reopen `[impl]` task with error context.
+
+### [test] — Test and Commit
 
 1. Read the files listed in the task description
 2. Run the project test suite:
@@ -114,38 +139,16 @@ Exit immediately. Let the bash loop handle the next iteration.
    - On pass: store only the summary line (e.g. `test result: ok. N passed; 0 failed`)
    - On failure: store only failing test names, `FAILED`/`error` sections, and tracebacks. Truncate to last 100 lines.
 
-**If all tests pass:** create `[review]` task with files list + summary + test result summary line only.
+**If tests fail:** create a new `[impl] RETRY` task (do NOT reopen the original `[impl]`). Pass parsed failure output only (no full cargo output). Increment RETRY counter. The retry goes through `[impl] → [review] → [test]` again — the fix needs its own simplify/lint pass before it can commit.
 
-**If tests fail:** create a new `[impl] RETRY` task (do NOT reopen the original `[impl]`). Pass parsed failure output only (no full cargo output). Increment RETRY counter.
+**If all tests pass:**
 
-### [review] — Simplify, Lint, and Commit
-
-1. Read the files listed in the task description
-2. **Simplify:** You are an expert code simplification specialist focused on enhancing code clarity, consistency, and maintainability while preserving exact functionality. Apply refinements that:
-    1. PRESERVE FUNCTIONALITY — never change what the code does, only how it does it
-    2. ENHANCE CLARITY — reduce unnecessary complexity and nesting, eliminate redundant abstractions, improve variable and function names
-    3. MAINTAIN BALANCE — avoid over-simplification; explicit code is often better than overly compact code
-    4. KEEP SCOPE — only touch the files listed in the task description
-    Re-run tests **only if** at least one file was modified during simplification. If no files changed, skip the re-run.
-3. **Lint:** Scope to the crate(s) containing the modified files (use `-p <crate>` if in a workspace):
-    ```bash
-    cargo fmt --all --check 2>&1
-    cargo clippy -p <crate> --all-targets --all-features -- -D warnings -W clippy::cargo -A clippy::multiple_crate_versions 2>&1
-    /usr/local/bin/gitleaks detect -v
-    ```
-    **If gitleaks finds secrets:** remove them from the code immediately. Use environment variables or config files listed in `.gitignore` instead. Do NOT proceed to commit until gitleaks passes clean.
-    > If the project does not use feature flags, omit `--all-features`.
-4. Fix any format or clippy issues found.
-    ```bash
-    cargo fmt --all
-    ```
-    For clippy issues, fix the code directly, do NOT suppress warnings with `#[allow(...)]`.
-5. **Commit:**
+1. **Commit:**
     ```bash
     git add <files>
     git commit -m "type(scope): description"
     ```
-6. Check if all sibling tasks under the Epic are closed.
+2. Check if all sibling tasks under the Epic are closed.
    If no: leave the Epic open.
    If yes: close the Epic, then push to remote:
     ```bash
@@ -155,17 +158,14 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```
     Work is NOT complete until `git push` succeeds. If push fails, resolve and retry.
 
-**If code review fails:** reopen `[impl]` task with error context.
-**If tests break after simplification:** reopen `[test]` task with error context.
-
 ---
 
 ## Task Creation Templates
 
-### After [impl] success → Create [test]
+### After [impl] success → Create [review]
 
 ```bash
-bd create "[test] Test: {ORIGINAL_TITLE}" \
+bd create "[review] Review: {ORIGINAL_TITLE}" \
   --parent {EPIC_ID} \
   --type task \
   --priority 0 \
@@ -181,10 +181,10 @@ EOF
 )"
 ```
 
-### After [test] success → Create [review]
+### After [review] success → Create [test]
 
 ```bash
-bd create "[review] Review: {ORIGINAL_TITLE}" \
+bd create "[test] Test: {ORIGINAL_TITLE}" \
   --parent {EPIC_ID} \
   --type task \
   --priority 0 \
@@ -194,8 +194,6 @@ FILES:
 
 SUMMARY:
 {impl summary}
-
-TESTS: {passed}/{total} passing
 
 RETRY: 0
 EOF
@@ -226,13 +224,13 @@ EOF
 )"
 ```
 
-### After [review] failure → Reopen [test]
+### After [review] failure → Reopen [impl]
 
 ```bash
-bd update {TEST_TASK_ID} --status open
-bd update {TEST_TASK_ID} --notes "RETRY: {N+1}
+bd update {IMPL_TASK_ID} --status open
+bd update {IMPL_TASK_ID} --notes "RETRY: {N+1}
 
-ISSUE AFTER SIMPLIFICATION:
+ISSUE FOUND DURING REVIEW:
 {error or lint issues}"
 ```
 

@@ -26,10 +26,10 @@ ralph-in-a-box.sh /path/to/project
 │  │   → bd init                               │  │
 │  │   → Create Epics + [impl] tasks           │  │
 │  ├───────────────────────────────────────────┤  │
-│  │ Iteration 1: [impl] Feature A → [test]    │  │
-│  │ Iteration 2: [test] Feature A → [review]  │  │
-│  │ Iteration 3: [review] Feature A → commit  │  │
-│  │ Iteration 4: [impl] Feature B → [test]    │  │
+│  │ Iteration 1: [impl] Feature A → [review]  │  │
+│  │ Iteration 2: [review] Feature A → [test]  │  │
+│  │ Iteration 3: [test] Feature A → commit    │  │
+│  │ Iteration 4: [impl] Feature B → [review]  │  │
 │  │ ...                                       │  │
 │  ├───────────────────────────────────────────┤  │
 │  │ Final: VERIFY plan coverage (report only) │  │
@@ -40,12 +40,14 @@ ralph-in-a-box.sh /path/to/project
 
 Each iteration, the agent picks the highest-priority ready task from beads, executes one phase, creates the next phase task, and exits to reset its context window. Task descriptions carry context between iterations, not conversation history.
 
+Tests run once per Epic, after review rather than before it — the code being tested is already simplified and linted, and the suite isn't paid for twice.
+
 | Phase     | Prefix     | On Success                    | On Failure                 |
 | --------- | ---------- | ----------------------------- | -------------------------- |
 | Bootstrap | —          | Create Epics + `[impl]` tasks | Exit with error            |
-| Implement | `[impl]`   | Create `[test]` task          | Report blocker             |
-| Test      | `[test]`   | Create `[review]` task        | Reopen `[impl]` with error |
-| Review    | `[review]` | Commit + close Epic           | Reopen `[test]` with error |
+| Implement | `[impl]`   | Create `[review]` task        | Report blocker             |
+| Review    | `[review]` | Create `[test]` task          | Reopen `[impl]` with error |
+| Test      | `[test]`   | Commit + close Epic           | Create `[impl] RETRY` task |
 | Verify    | —          | Print coverage report         | — (informational only)     |
 
 Failures retry up to 3 times before creating a blocker task for manual intervention.
