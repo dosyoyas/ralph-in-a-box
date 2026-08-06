@@ -30,9 +30,9 @@ You have all tools available: Bash, Read, Edit, Write, Glob, Grep.
 
 | Prefix     | On Success            | On Failure              |
 | ---------- | --------------------- | ----------------------- |
-| `[impl]`   | Create `[review]` child | Report blocker          |
-| `[review]` | Create `[test]`         | Reopen `[impl]` w/error |
-| `[test]`   | Commit + close Epic     | Create `[impl] RETRY`   |
+| `[impl]`   | Record files; last sibling creates `[review]` | Report blocker             |
+| `[review]` | Create `[test]`                               | Reopen `[impl]` w/error    |
+| `[test]`   | Commit + close Epic                           | Create `[impl] RETRY` task |
 
 ---
 
@@ -54,7 +54,25 @@ bd update <id> --claim
 bd show <id> --json
 ```
 
-Parse the task title prefix: `[impl]`, `[test]`, or `[review]`.
+Parse the task title prefix — `[impl]`, `[test]`, or `[review]` — and read the
+`parent` field: that is the Epic ID.
+
+**Then orient yourself within the Epic. One query, not exploration:**
+
+```bash
+bd list --all --json | jq -r --arg e "<parent>" \
+  '[.[] | select(.parent==$e)] | sort_by(.priority)[]
+   | "[\(.status)] \(.title) :: \((.close_reason // "-")[0:80])"'
+```
+
+This is your only view of what previous iterations did. Use it to:
+- **Skip redundant work** — a closed `[impl]` sibling already built its slice; do NOT re-explore or re-implement it
+- **Know where you are** — the open siblings tell you whether you are the last `[impl]`, which Phase 4 depends on
+- **Understand a RETRY** — closed siblings and their close reasons show what the previous attempt tried and why it failed
+
+Best-effort: if `parent` is null (no Epic) or the command does not return valid
+JSON, skip it and proceed with the task as described. Do NOT retry it and do NOT
+treat it as an environment error.
 
 ### Phase 3: Execute Phase Directly
 
@@ -150,28 +168,33 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```
 2. Check if all sibling tasks under the Epic are closed.
    If no: leave the Epic open.
-   If yes: close the Epic, then push to remote:
+   If yes: close the Epic, then sync with remote **only if a remote is already configured**:
     ```bash
-    git pull --rebase
-    git push
-    git status  # must show "up to date with origin"
+    git remote | grep -q . && git pull --rebase && git push && git status
     ```
-    Work is NOT complete until `git push` succeeds. If push fails, resolve and retry.
+    **IMPORTANT:** First run `git remote`. If the output is empty, skip the pull/push entirely — do NOT create a remote, do NOT add an origin. The loop handles the push. If a remote exists and push fails (e.g. conflict), resolve and retry.
 
 ---
 
 ## Task Creation Templates
 
-### After [impl] success → Create [review]
+### After [impl] success → Record files, then check siblings
 
 ```bash
-bd create "[review] Review: {ORIGINAL_TITLE}" \
+# Step 1: Record modified files on the current task
+bd update {IMPL_TASK_ID} --notes "FILES MODIFIED: {list of files}"
+
+# Step 2a: If open [impl] siblings remain — close and exit (no [review] task)
+bd close {IMPL_TASK_ID} --reason "Implementation complete; awaiting sibling [impl] tasks"
+
+# Step 2b: If this is the last [impl] — collect all FILES MODIFIED notes, then create [review]
+bd create "[review] Review: {EPIC_TITLE}" \
   --parent {EPIC_ID} \
   --type task \
   --priority 0 \
   --description "$(cat <<'EOF'
 FILES MODIFIED:
-{list of files}
+{combined list from all [impl] siblings}
 
 IMPLEMENTATION SUMMARY:
 {brief description}
@@ -179,6 +202,7 @@ IMPLEMENTATION SUMMARY:
 RETRY: 0
 EOF
 )"
+bd close {IMPL_TASK_ID} --reason "Implementation complete; [review] task created"
 ```
 
 ### After [review] success → Create [test]
@@ -265,7 +289,7 @@ Then append to `BLOCKERS.md` in the workspace root (create if it doesn't exist):
 | RETRY value        | Action                                   |
 | ------------------ | ---------------------------------------- |
 | < MAX_RETRIES      | Reopen previous phase with error context |
-| >= MAX_RETRIES     | Create blocker, close Epic               |
+| >= MAX_RETRIES     | Create blocker, close Epic, write to BLOCKERS.md |
 
 ---
 
@@ -302,3 +326,18 @@ MAX_RETRIES: 2 (default)
 6. **EXIT AFTER TASK** — Let bash loop handle next iteration
 7. **NO PLACEHOLDERS** — Full implementations only
 8. **NEVER DELETE** `AGENTS.md`, `specs/`, or `ACTION_PLAN.md` — these are managed by the loop
+9. **FAIL FAST ON ENVIRONMENT ERRORS** — If you encounter any of these errors, do NOT create a BLOCKED task. Instead, leave the current task open (unclaimed) and, **as your final output on its own line**, print the token followed by a one-line reason in this exact form: `RALPH_ENV_ERROR: <concise reason — include the failing command and the key error text>`. Then stop. You run headless and CANNOT set your own process exit code — the loop watches for this token in your output and halts the whole run when it sees it. The reason is shown to the user, so make it specific.
+   - AWS SSO/token expired (`TokenRetrievalError`, `InvalidGrantException`, `ExpiredTokenException`)
+   - Docker OOM kill (exit code 137)
+   - Docker daemon unreachable
+   - Network/auth failures that are not code bugs
+   - `cargo` cannot fetch the registry or a dependency (e.g. `failed to get ... from registry`, network timeout on `crates.io`)
+   Example: `RALPH_ENV_ERROR: cargo build failed — failed to fetch https://github.com/rust-lang/crates.io-index`. These are environment problems the user must fix before re-launching. Creating BLOCKED tasks wastes iterations and requires manual cleanup. Do NOT print `RALPH_ENV_ERROR` for ordinary compile errors, clippy warnings, or test failures — only for unrecoverable environment problems. When you write the reason, it is fine that the token appears in your final text; print it as a standalone line, not buried mid-sentence.
+
+   **NOT an environment error — do NOT bail:** `bd` may print a warning like `Error 1105: column "depends_on_id" could not be found ... Error checking blockers` while still **succeeding** (it exits 0 and the command takes effect — e.g. `bd close` still closes the issue). This is a benign blocker-check warning on stderr, not a failure. **Judge `bd` by its exit code, not by stderr text.** If the exit code is 0, proceed normally; never emit `RALPH_ENV_ERROR` for it.
+10. **STRICT SCOPE** — Only modify/create files listed in ACTION_PLAN "Files to touch". Do NOT:
+    - Refactor existing code that works and is not required by the task
+    - Create documentation files (*.md) unless the plan explicitly requests them
+    - Create helper scripts or wrapper utilities
+    - Add abstractions (traits, wrappers, indirection) not specified in the plan
+    If you need to touch an unlisted file to make the implementation work (e.g. a test fixture), that is acceptable. Refactors and "improvements" to adjacent code are NOT acceptable — they belong in a separate ticket.

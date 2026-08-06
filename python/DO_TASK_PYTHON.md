@@ -54,7 +54,25 @@ bd update <id> --claim
 bd show <id> --json
 ```
 
-Parse the task title prefix: `[impl]`, `[test]`, or `[review]`.
+Parse the task title prefix — `[impl]`, `[test]`, or `[review]` — and read the
+`parent` field: that is the Epic ID.
+
+**Then orient yourself within the Epic. One query, not exploration:**
+
+```bash
+bd list --all --json | jq -r --arg e "<parent>" \
+  '[.[] | select(.parent==$e)] | sort_by(.priority)[]
+   | "[\(.status)] \(.title) :: \((.close_reason // "-")[0:80])"'
+```
+
+This is your only view of what previous iterations did. Use it to:
+- **Skip redundant work** — a closed `[impl]` sibling already built its slice; do NOT re-explore or re-implement it
+- **Know where you are** — the open siblings tell you whether you are the last `[impl]`, which Phase 4 depends on
+- **Understand a RETRY** — closed siblings and their close reasons show what the previous attempt tried and why it failed
+
+Best-effort: if `parent` is null (no Epic) or the command does not return valid
+JSON, skip it and proceed with the task as described. Do NOT retry it and do NOT
+treat it as an environment error.
 
 ### Phase 3: Execute Phase Directly
 
