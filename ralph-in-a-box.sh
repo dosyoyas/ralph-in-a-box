@@ -5,11 +5,13 @@
 #
 #   do_task_file  Path to the DO_TASK prompt file to use.
 #                 Relative paths are resolved from the ralph-loop directory.
-#                 Defaults to DO_TASK_PYTHON.md.
+#                 Defaults to the prompt matching RALPH_IMAGE:
+#                   *rust* -> rust/DO_TASK_RUST.md
+#                   otherwise -> python/DO_TASK_PYTHON.md
 #                 Example: ./ralph-in-a-box.sh /path/to/project DO_TASK_AGENTS.md
 #
 #   RALPH_IMAGE   Docker image to use (env var). Defaults to ralph-python:latest.
-#                 Example: RALPH_IMAGE=ralph-loop-rust:latest ./ralph-in-a-box.sh ...
+#                 Example: RALPH_IMAGE=ralph-rust:latest ./ralph-in-a-box.sh ...
 
 set -e
 
@@ -22,9 +24,20 @@ if [ ! -d "$WORKSPACE" ]; then
     exit 1
 fi
 
-# Resolve DO_TASK file path (absolute or relative to this script)
+# Resolve DO_TASK file path (absolute or relative to this script).
+#
+# The prompt is bind-mounted over /opt/ralph/DO_TASK.md, shadowing whatever the
+# image COPYied in. So a wrong default is not merely unused — it silently
+# replaces the image's own prompt. Derive the default from RALPH_IMAGE to keep
+# the toolchain in the image and the toolchain in the prompt in agreement
+# (running ralph-rust with the Python prompt would have the agent reach for
+# ruff/pytest in a Cargo project). An explicit argument 2 always wins.
 RALPH_DIR="$(cd "$(dirname "$0")" && pwd)"
-DO_TASK_ARG="${2:-python/DO_TASK_PYTHON.md}"
+case "${RALPH_IMAGE:-ralph-python:latest}" in
+*rust*) DEFAULT_DO_TASK="rust/DO_TASK_RUST.md" ;;
+*) DEFAULT_DO_TASK="python/DO_TASK_PYTHON.md" ;;
+esac
+DO_TASK_ARG="${2:-$DEFAULT_DO_TASK}"
 if [[ "$DO_TASK_ARG" == /* ]]; then
     DO_TASK_SOURCE="$DO_TASK_ARG"
 else

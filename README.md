@@ -161,9 +161,9 @@ RALPH_AGENT=ollama \
 RALPH_OLLAMA_MODEL=qwen2.5-coder:14b \
   ./ralph-in-a-box.sh /path/to/project
 
-# Rust variant (any agent)
+# Rust variant (any agent) — the DO_TASK prompt defaults to match the image
 RALPH_IMAGE=ralph-rust:latest \
-  ./ralph-in-a-box.sh /path/to/project rust/DO_TASK_RUST.md
+  ./ralph-in-a-box.sh /path/to/project
 ```
 
 ### What to expect
