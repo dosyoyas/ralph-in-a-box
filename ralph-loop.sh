@@ -229,8 +229,18 @@ start_watchdog() {
     local reader_pid=$2
     while kill -0 "$agent_pid" 2>/dev/null; do
         sleep 30
-        local last_beat=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo "0")
         local now=$(date +%s)
+        local last_beat=$(cat "$HEARTBEAT_FILE" 2>/dev/null)
+        # parse_stream writes via `date +%s >"$HEARTBEAT_FILE"`, which opens
+        # with O_TRUNC before the timestamp is written. A poll landing in that
+        # window reads an empty file — `cat` still exits 0, so the old
+        # `|| echo "0"` fallback (which only covers a *failed* cat) never
+        # caught it, and `$(( now - "" ))` evaluated the empty string as 0,
+        # producing silent ~= now (the current epoch, ~1.7 billion) and an
+        # instant false-positive kill. Default to `now` instead: a stale or
+        # unreadable read costs at most one extra 30s poll, never a guaranteed
+        # kill.
+        last_beat=${last_beat:-$now}
         local silent=$(( now - last_beat ))
         if [ "$silent" -ge "$AGENT_TIMEOUT" ]; then
             echo ""
