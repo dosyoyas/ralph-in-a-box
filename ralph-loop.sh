@@ -91,7 +91,11 @@ parse_stream() {
 
         # Detect account usage/quota exhaustion in the raw stream (any agent).
         # These messages are not tied to a non-zero exit code, so flag them here.
+        # Skip prompt echoes, reasoning and tool traffic: file contents and
+        # command output (e.g. code handling a "usage limit exceeded" error)
+        # would otherwise trigger a false halt.
         case "$line" in
+        *'"type":"user"'* | *'"role":"user"'* | *'"type":"thinking"'* | *'"thinking":"'* | *'"type":"tool_use"'* | *'"type":"tool_result"'*) ;;
         *"reached your normal usage limit"* | *"out of usage"* | *"increase your limit to continue"* | *"usage limit"*)
             echo "LIMIT" >"$USAGE_LIMIT_FILE"
             ;;
