@@ -8,6 +8,8 @@ You are running inside the ralph-in-a-box autonomous loop. These instructions ap
 
 **CRITICAL:** Use `bd` for ALL task tracking. Never use TodoWrite, TaskCreate, or markdown TODO lists.
 
+When you discover work outside the scope of the current task, file it with `bd create "<title>" --description="<context>" --deps discovered-from:<current-id> --json` instead of doing it now.
+
 ## Workflow Rules
 
 1. **ONE PHASE PER ITERATION** — execute one task phase, then exit cleanly
