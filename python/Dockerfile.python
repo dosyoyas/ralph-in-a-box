@@ -44,7 +44,7 @@ RUN GITLEAKS_VERSION="8.30.1" \
     && chmod +x /usr/local/bin/gitleaks
 
 # Install all agent CLIs (selected at runtime via RALPH_AGENT)
-RUN npm install -g @anthropic-ai/claude-code@2.1.50
+RUN npm install -g @anthropic-ai/claude-code@latest
 RUN npm install -g @openai/codex @fission-ai/openspec@latest
 RUN curl https://cursor.com/install -fsS | bash
 

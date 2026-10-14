@@ -218,6 +218,7 @@ All settings are environment variables:
 | `AWS_PROFILE`                | —                   | AWS profile (Bedrock only)                                |
 | `AWS_REGION`                 | —                   | AWS region (Bedrock only)                                 |
 | `RALPH_OLLAMA_MODEL`         | `qwen2.5-coder:14b` | Model name passed to Ollama (`RALPH_AGENT=ollama` only)   |
+| `RALPH_CURSOR_MODEL`         | `composer-2.5`      | Model passed to Cursor Agent via `--model` (`RALPH_AGENT=cursor` only) |
 | `RALPH_MIN_DOCKER_MEM_GB`   | `10`                | Minimum Docker memory (GB) — loop exits if below this     |
 | `RALPH_REQUIRE_AWS`          | —                   | Set to `1` to require valid AWS credentials at startup    |
 

@@ -95,7 +95,7 @@ parse_stream() {
         # command output (e.g. code handling a "usage limit exceeded" error)
         # would otherwise trigger a false halt.
         case "$line" in
-        *'"type":"user"'* | *'"role":"user"'* | *'"type":"thinking"'* | *'"thinking":"'* | *'"type":"tool_use"'* | *'"type":"tool_result"'*) ;;
+        *'"type":"user"'* | *'"role":"user"'* | *'"type":"thinking"'* | *'"thinking":"'* | *'"type":"tool_use"'* | *'"type":"tool_result"'* | *'"type":"tool_call"'*) ;;
         *"reached your normal usage limit"* | *"out of usage"* | *"increase your limit to continue"* | *"usage limit"*)
             echo "LIMIT" >"$USAGE_LIMIT_FILE"
             ;;
@@ -306,6 +306,7 @@ invoke_agent() {
         cursor)
             agent -p "$(cat "$prompt_file")" \
                 --force \
+                --model "${RALPH_CURSOR_MODEL:-composer-2.5}" \
                 --output-format stream-json \
                 --stream-partial-output
             ;;
