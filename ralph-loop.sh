@@ -46,11 +46,24 @@ cleanup() {
     rm -f "$ENV_ERROR_FILE" 2>/dev/null
     rm -f "$MALFORMED_TOOLCALL_FILE" 2>/dev/null
     rm -f "$LAST_TOOL_ERROR_FILE" 2>/dev/null
+    rm -f "$WATCHDOG_FIRED_FILE" 2>/dev/null
 }
-trap cleanup EXIT SIGTERM SIGINT
+trap cleanup EXIT
+# The handler does not exit (the loop stops through the agent-error path), so
+# remember the interrupt: after Ctrl+C / docker stop a watchdog kill must not be
+# mistaken for a plain timeout (see WATCHDOG_FIRED_FILE).
+INTERRUPTED=0
+trap 'INTERRUPTED=1; cleanup' SIGTERM SIGINT
 
 # Timestamp file for watchdog (tracks last output from agent)
 HEARTBEAT_FILE=$(mktemp /tmp/ralph-heartbeat-XXXXXX)
+
+# Flag file: written by the watchdog right before it kills a silent agent. A
+# missing rc (exit code 124) has two causes that must not be confused: the
+# watchdog killed the agent (the turn may still have produced work, so the loop
+# judges it by progress) or the user interrupted it with Ctrl+C (the loop must
+# stop). Only the first one writes this file.
+WATCHDOG_FIRED_FILE=$(mktemp /tmp/ralph-watchdog-XXXXXX)
 
 # Flag file: set by parse_stream when the agent reports an account usage/quota
 # limit (e.g. Cursor "You've reached your normal usage limit"). The agent keeps
@@ -249,6 +262,7 @@ start_watchdog() {
         if [ "$silent" -ge "$AGENT_TIMEOUT" ]; then
             echo ""
             echo "⚠️  WATCHDOG: Agent silent for ${silent}s (timeout: ${AGENT_TIMEOUT}s) — killing"
+            echo 1 >"$WATCHDOG_FIRED_FILE"
             kill_tree "$agent_pid" TERM
             sleep 2
             kill_tree "$agent_pid" KILL
@@ -272,6 +286,7 @@ invoke_agent() {
     : >"$ENV_ERROR_FILE"
     : >"$MALFORMED_TOOLCALL_FILE"
     : >"$LAST_TOOL_ERROR_FILE"
+    : >"$WATCHDOG_FIRED_FILE"
 
     # Run the agent and the stream parser as SEPARATE processes connected by a
     # FIFO — not a shell pipeline. A pipeline (`agent | parse_stream &`) only
@@ -798,14 +813,27 @@ while true; do
 
     echo "---"
 
+    TIMED_OUT=0
     if [ $AGENT_EXIT_CODE -ne 0 ]; then
-        echo ""
-        echo "════════════════════════════════════════"
-        echo "❌ AGENT ERROR (exit code: $AGENT_EXIT_CODE)"
-        echo "════════════════════════════════════════"
-        echo ""
-        bd list
-        exit $AGENT_EXIT_CODE
+        if [ $AGENT_EXIT_CODE -eq 124 ] && [ -s "$WATCHDOG_FIRED_FILE" ] && [ "$INTERRUPTED" -eq 0 ]; then
+            # The watchdog killed a silent agent. That says nothing about the
+            # work it did before (it may have finished its phase and not
+            # exited, or be blocked in one long silent command), so judge the
+            # turn by progress below instead of halting. Release the task it
+            # had claimed so the next iteration can pick it up again.
+            TIMED_OUT=1
+            echo ""
+            echo "⚠️  WATCHDOG TIMEOUT (exit code 124) — judging this turn by progress, not by exit code"
+            release_orphaned_tasks
+        else
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "❌ AGENT ERROR (exit code: $AGENT_EXIT_CODE)"
+            echo "════════════════════════════════════════"
+            echo ""
+            bd list
+            exit $AGENT_EXIT_CODE
+        fi
     fi
 
     # No-progress guard. A headless agent always exits 0, so exit code alone
@@ -834,10 +862,16 @@ while true; do
             echo "════════════════════════════════════════"
             echo "❌ HALTED - $NO_PROGRESS consecutive no-progress iterations"
             echo "════════════════════════════════════════"
-            echo "The agent ran without error but produced no work (no edits, no"
-            echo "commits, no task closed) $NO_PROGRESS times in a row. This usually means"
-            echo "the model cannot emit valid tool calls (common with some quantized"
-            echo "local builds) or is stuck re-reading context."
+            echo "The agent produced no work (no edits, no commits, no task closed)"
+            echo "$NO_PROGRESS times in a row. This usually means the model cannot emit valid"
+            echo "tool calls (common with some quantized local builds) or is stuck re-reading"
+            echo "context."
+            if [ "$TIMED_OUT" -eq 1 ]; then
+                echo ""
+                echo "The last turn was killed by the watchdog (silent for ${AGENT_TIMEOUT}s). A long command"
+                echo "that prints nothing (a test run, a build) looks like a hang: raise AGENT_TIMEOUT"
+                echo "or have the agent run it in the background and poll it."
+            fi
             echo ""
             echo "Fix: try a different model/build, or inspect $LOG_FILE."
             echo ""

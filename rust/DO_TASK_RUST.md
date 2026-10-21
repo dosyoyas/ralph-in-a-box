@@ -153,6 +153,22 @@ Exit immediately. Let the bash loop handle the next iteration.
     ```bash
     cargo test 2>&1
     ```
+
+    **Run long commands in the background and poll them.** The loop kills you (exit 124) after `AGENT_TIMEOUT`
+    seconds (default 600) without any output, and your shell tool prints nothing until a command ends: one blocking
+    command that runs longer than that gets you killed mid-run and the Epic stalls. So if the test run can take more
+    than ~5 minutes (a big suite, a build, containers), start it in the background and poll it with short commands.
+    Write the command to a script, so the log captures all of it whatever quotes or `&&` it contains, and start it
+    detached:
+    ```bash
+    cat > /tmp/run-tests-bg.sh <<'EOF'
+    cargo test
+    EOF
+    nohup bash -c 'bash /tmp/run-tests-bg.sh > /tmp/test-run.log 2>&1; echo "exit=$?" >> /tmp/test-run.log' >/dev/null 2>&1 &
+    ```
+    Then repeat `sleep 45; tail -n 5 /tmp/test-run.log` (every poll must return in under a minute) until a line
+    `exit=<N>` appears: `<N>` is the exit code of the run and the log holds its full output. Never start a second run
+    while one is in progress. Short runs (under ~5 minutes) can run in the foreground as above.
 3. Capture output — **truncate before storing:**
    - On pass: store only the summary line (e.g. `test result: ok. N passed; 0 failed`)
    - On failure: store only failing test names, `FAILED`/`error` sections, and tracebacks. Truncate to last 100 lines.

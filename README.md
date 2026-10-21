@@ -207,7 +207,7 @@ All settings are environment variables:
 | `MAX_ITERATIONS`             | `50`                | Maximum loop iterations before stopping                   |
 | `MAX_COST`                   | `100.00`            | Maximum spend in USD (Claude only)                        |
 | `MAX_NO_PROGRESS`            | `2`                 | Halt after N consecutive iterations that exit 0 but produce no work (no edits/commits/closed task); releases stranded `in_progress` claims between attempts |
-| `AGENT_TIMEOUT`              | `600`               | Watchdog: kill the agent after N seconds with no output (guards against a hung iteration). Default 10 min |
+| `AGENT_TIMEOUT`              | `600`               | Watchdog: kill the agent after N seconds with no output (guards against a hung iteration). Default 10 min. A killed turn (exit 124) is judged by progress like any other, not halted at once; interrupts (Ctrl+C) still stop the loop. A long command that prints nothing looks like a hang, so the `[test]` prompt has the agent run it in the background and poll it |
 | `RALPH_SSH_CONFIG`           | —                   | Path to an SSH config file mounted (symlink resolved) at `/root/.ssh/config`. Use when your host `~/.ssh/config` is a symlink (e.g. into a dotfiles repo) — it dangles inside the container, so per-host `IdentityFile` mappings are lost and pushes fail for non-default key names. Unset → unchanged. |
 | `ANTHROPIC_API_KEY`          | —                   | Claude auth (API key)                                     |
 | `CLAUDE_CODE_USE_BEDROCK`    | —                   | Set to `1` for AWS Bedrock (mounts `~/.aws` read-only)    |
@@ -255,7 +255,7 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 | `4`   | MAX_COST exceeded (Claude only)        |
 | `5`   | Finished with warnings (verify gaps or dirty workspace) |
 | `6`   | Environment error (AWS token expired, Docker OOM/unreachable, agent usage limit reached) |
-| `7`   | Halted — consecutive no-progress iterations (`MAX_NO_PROGRESS`); agent ran without error but produced no work (often a model that can't emit valid tool calls) |
+| `7`   | Halted — consecutive no-progress iterations (`MAX_NO_PROGRESS`); the agent produced no work, whether it exited normally or was killed by the watchdog (often a model that can't emit valid tool calls, or a long silent command) |
 | other | Agent error                            |
 
 ## Agent Settings
