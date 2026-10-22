@@ -118,19 +118,23 @@ parse_stream() {
         # its own exit code in headless mode, so it prints this marker and the
         # loop halts in invoke_agent.
         #
-        # Two false-positive sources, both excluded:
+        # Three false-positive sources, all excluded:
         #   1. Prompt echo — some agents replay the prompt as a "type":"user"
         #      event, and the prompt documents the token.
         #   2. The model *citing* the token while reasoning about it (e.g.
         #      gemma4's thinking: "print the exact token `RALPH_ENV_ERROR` on
         #      its own line"). Reasoning lives in "thinking" blocks and quotes
         #      the token inline (backticks, mid-sentence).
-        # So: skip user/thinking lines entirely, and otherwise require the token
-        # to appear as an isolated JSON string value or alone on its own line
+        #   3. An explicit non-error ("RALPH_ENV_ERROR: none — this is a test
+        #      defect…"), which models print to say there is *no* problem.
+        # So: skip user/thinking lines and explicit non-errors entirely, and
+        # otherwise require the token to appear as an isolated JSON string
+        # value or alone on its own line
         # ("\n…\n"), which is how a genuine emission ("on its own line") arrives
         # in an assistant text block — not as a substring of prose.
         case "$line" in
         *'"type":"user"'* | *'"role":"user"'* | *'"type":"thinking"'* | *'"thinking":"'*) ;;
+        *'RALPH_ENV_ERROR: none'* | *'RALPH_ENV_ERROR: None'* | *'RALPH_ENV_ERROR: n/a'*) ;;
         *'"RALPH_ENV_ERROR"'* | *'"RALPH_ENV_ERROR\n'* | *'\nRALPH_ENV_ERROR"'* | *'\nRALPH_ENV_ERROR\n'* | *'"RALPH_ENV_ERROR: '* | *'\nRALPH_ENV_ERROR: '*)
             # Capture the reason the model gave (the "RALPH_ENV_ERROR: <reason>"
             # line, or the whole accompanying text block) so the banner can show
