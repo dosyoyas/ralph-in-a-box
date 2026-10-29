@@ -429,6 +429,38 @@ protect_after() {
     fi
 }
 
+# JIRA ticket every beads issue of this run is labelled with, for traceability
+# (`bd list -l <TICKET>`). The beads prefix names the repo, so it cannot carry the
+# ticket. Taken from the branch (its leading ticket, else the whole name); only on
+# main/master, where the branch says nothing, from AGENTS.md. Empty = no label.
+resolve_ticket() {
+    local branch tag
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -n "$branch" ] && [ "$branch" != "main" ] && [ "$branch" != "master" ]; then
+        tag=$(printf '%s' "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -n 1)
+        printf '%s' "${tag:-$branch}"
+        return 0
+    fi
+    grep -oE '[A-Z][A-Z0-9]+-[0-9]+' AGENTS.md 2>/dev/null | head -n 1
+}
+TICKET=$(resolve_ticket)
+RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Label every issue created during this run that lacks the ticket. Runs after each
+# agent turn, so it covers every creation path (bootstrap, [review], [test], RETRY,
+# BLOCKED, discovered work) without relying on the prompts. Issues of earlier runs
+# are left alone: they belong to their own ticket.
+label_run_issues() {
+    local ids
+    [ -n "$TICKET" ] || return 0
+    ids=$(bd list --all --json 2>/dev/null | jq -r --arg t "$TICKET" --arg since "$RUN_STARTED_AT" \
+        '.[] | select(.created_at >= $since) | select((.labels // []) | index($t) | not) | .id' 2>/dev/null)
+    [ -n "$ids" ] || return 0
+    # shellcheck disable=SC2086 # one issue id per word
+    bd label add $ids "$TICKET" >/dev/null 2>&1 || echo "⚠️  Could not label issues with $TICKET: $ids"
+    return 0
+}
+
 # Archive ACTION_PLAN.md after a bootstrap — but ONLY if the agent actually
 # created tasks in beads. A bootstrap can "succeed" (exit 0) while producing
 # zero tasks (e.g. the agent backend returned empty responses). Archiving the
@@ -558,6 +590,7 @@ echo "0" >"$ITERATION_FILE"
 echo "0" >"$NO_PROGRESS_FILE"
 echo "Agent: $RALPH_AGENT"
 echo "Logs: $LOG_FILE"
+echo "Ticket label: ${TICKET:-<none>}"
 if [ "$RALPH_AGENT" = "claude" ]; then
     echo "Limits: MAX_ITERATIONS=$MAX_ITERATIONS, MAX_COST=\$$MAX_COST"
 else
@@ -640,6 +673,7 @@ while true; do
             invoke_agent "$BOOTSTRAP_FILE"
             AGENT_EXIT_CODE=$?
             protect_after
+            label_run_issues
 
             if [ $AGENT_EXIT_CODE -ne 0 ]; then
                 echo ""
@@ -669,6 +703,7 @@ while true; do
             invoke_agent "$BOOTSTRAP_FILE"
             AGENT_EXIT_CODE=$?
             protect_after
+            label_run_issues
 
             if [ $AGENT_EXIT_CODE -ne 0 ]; then
                 echo ""
@@ -716,6 +751,7 @@ while true; do
             invoke_agent "$VERIFY_FILE"
             VERIFY_EXIT=$?
             protect_after
+            label_run_issues
 
             if [ "$VERIFY_EXIT" -ne 0 ]; then
                 VERIFY_OK=false
@@ -814,6 +850,7 @@ while true; do
     invoke_agent "$DO_TASK_FILE"
     AGENT_EXIT_CODE=$?
     protect_after
+    label_run_issues
 
     echo "---"
 
