@@ -47,6 +47,17 @@ bd ready --json       # Find next unblocked task
 
 If no tasks ready, exit immediately.
 
+**Finish the Epic in flight before starting another.** An Epic's work stays uncommitted until its `[test]`, so
+interleaving two Epics mixes their changes in the working tree. If an open Epic already has a closed `[impl]` (its
+work is waiting for `[review]` / `[test]`), take a ready task of that Epic; take another Epic's task only when the
+in-flight Epic has none ready (e.g. its next task is blocked by the other Epic). In-flight Epics:
+
+```bash
+bd list --all --json | jq -r '
+  [.[] | select((.title | test("^\\[impl\\]")) and .status == "closed") | .parent] as $done
+  | .[] | select(.issue_type == "epic" and .status != "closed" and (.id as $id | $done | index($id))) | .id'
+```
+
 ### Phase 2: Claim and Identify
 
 ```bash
@@ -177,9 +188,18 @@ Exit immediately. Let the bash loop handle the next iteration.
 
 1. **Commit:**
     ```bash
-    git add <files>
+    git add <this Epic's FILES MODIFIED + files its [review]/[test] changed>   # by path; never git add -A / .
     git commit -m "type(scope): description"
+    git status --porcelain | grep -v '^??'   # check what is left, see below
     ```
+    The commit holds **this Epic only** — never stage a file just because it is modified. For each tracked file still
+    modified after the commit:
+    - listed in the `FILES MODIFIED` notes of another open Epic's closed `[impl]` (`bd show <id>`) → that Epic's
+      uncommitted work: leave it, it lands with that Epic's `[test]`;
+    - part of this Epic but missed → amend it into this commit;
+    - neither → accidental change: revert it with `git checkout -- <file>`.
+    A file listed by both this Epic and another in-flight Epic cannot be split: commit it here and say so in the
+    `[test]` close reason ("also carries <other Epic> changes in <file>").
 2. Check if all sibling tasks under the Epic are closed.
    If no: leave the Epic open.
    If yes: close the Epic, then sync with remote **only if a remote is already configured**:
