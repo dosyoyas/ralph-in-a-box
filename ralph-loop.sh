@@ -24,6 +24,11 @@ AGENT_TIMEOUT="${AGENT_TIMEOUT:-600}"  # Kill agent after N seconds of no output
 # which would otherwise strand the claim and silently block all dependents.
 MAX_NO_PROGRESS="${MAX_NO_PROGRESS:-2}"
 
+# Titles of plan work the loop executes. Epics and discovered-work issues (filed
+# without a prefix, see agent-settings CLAUDE.md) are not plan work: they never
+# keep a plan from landing, and leftover discovered work is listed as backlog.
+ACTIONABLE_TITLE_RE='^\[(impl|test|review)\]'
+
 # Use shared log directory and project name (set by ralph-in-a-box.sh) or fallback
 LOG_DIR="${RALPH_LOG_DIR:-/tmp}"
 PROJECT_NAME="${RALPH_PROJECT_NAME:-$(basename "$(pwd)")}"
@@ -575,6 +580,18 @@ release_orphaned_tasks() {
     done
 }
 
+# Discovered work still open when a plan lands: not this plan's, so it does not
+# block, but it must not vanish either.
+print_backlog() {
+    local backlog
+    backlog=$(bd list --json 2>/dev/null | jq -r --arg re "$ACTIONABLE_TITLE_RE" \
+        '.[] | select(.issue_type != "epic") | select(.title | test($re) | not) | "  \(.id)  \(.title)"' 2>/dev/null)
+    [ -n "$backlog" ] || return 0
+    echo ""
+    echo "📌 Backlog left open (discovered work, not part of this plan):"
+    echo "$backlog"
+}
+
 # Track elapsed time
 START_TIME=$(date +%s)
 elapsed() {
@@ -652,12 +669,13 @@ while true; do
 
     # Task detection: get counts (fallback to empty if beads not initialized)
     TASK_JSON=$(bd list --json 2>/dev/null || echo "[]")
-    TOTAL=$(echo "$TASK_JSON" | jq 'length')
-    OPEN=$(echo "$TASK_JSON" | jq '[.[] | select(.status != "closed")] | length')
+    WORK_JSON=$(echo "$TASK_JSON" | jq --arg re "$ACTIONABLE_TITLE_RE" '[.[] | select(.title | test($re))]')
+    TOTAL=$(echo "$WORK_JSON" | jq 'length')
+    OPEN=$(echo "$WORK_JSON" | jq '[.[] | select(.status != "closed")] | length')
     READY=$(bd ready --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
 
     if [ "$TOTAL" = "0" ] || [ -z "$TOTAL" ]; then
-        # bd list --json only returns open tasks; if .beads exists, all tasks are closed
+        # bd list --json only returns open issues; none is plan work, so the previous plan is done
         if [ -d ".beads" ] && [ -f "ACTION_PLAN.md" ]; then
             # New ACTION_PLAN.md with all previous tasks closed — re-bootstrap
             echo ""
@@ -733,6 +751,7 @@ while true; do
         echo "✅ ALL TASKS COMPLETED - LANDING THE PLANE"
         echo "════════════════════════════════════════"
         bd list --status closed | head -20
+        print_backlog
 
         # Verification: compare ACTION_PLAN against completed tasks
         VERIFY_OK=true
@@ -804,7 +823,7 @@ while true; do
     fi
 
     # Count only actionable tasks (not epics) in the ready queue
-    READY_TASKS=$(bd ready --json 2>/dev/null | jq '[.[] | select(.title | test("^\\[impl\\]|^\\[test\\]|^\\[review\\]"))] | length' 2>/dev/null || echo "0")
+    READY_TASKS=$(bd ready --json 2>/dev/null | jq --arg re "$ACTIONABLE_TITLE_RE" '[.[] | select(.title | test($re))] | length' 2>/dev/null || echo "0")
 
     if [ "$READY_TASKS" = "0" ]; then
         # Before giving up: a task stranded in_progress (e.g. an earlier crash,
