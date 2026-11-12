@@ -237,7 +237,7 @@ The Docker boundary is the security perimeter. The agent runs with permission-sk
 
 ## Live Monitoring
 
-When running inside tmux, `ralph-in-a-box.sh` creates a split pane that tails the JSON log stream. Without tmux, monitor manually:
+When running inside tmux or Rex, `ralph-in-a-box.sh` creates a split pane that tails the JSON log stream. Without either, monitor manually:
 
 ```bash
 # Log file is named <agent>_live_<project>.log

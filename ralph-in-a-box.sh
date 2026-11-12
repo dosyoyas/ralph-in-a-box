@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Run ralph loop inside Docker container with host-side tmux monitoring
+# Run ralph loop inside Docker container with host-side tmux/Rex monitoring
 # Usage: ./ralph-in-a-box.sh /path/to/workspace [do_task_file]
 #
 #   do_task_file  Path to the DO_TASK prompt file to use.
@@ -94,20 +94,41 @@ esac
 # Cleanup on exit
 MONITOR_PANE=""
 cleanup() {
-    [ -n "$MONITOR_PANE" ] && tmux kill-pane -t "$MONITOR_PANE" 2>/dev/null || true
+    if [ -n "$MONITOR_PANE" ]; then
+        case "$MUX" in
+        rex) rex block close "$MONITOR_PANE" >/dev/null 2>&1 || true ;;
+        tmux) tmux kill-pane -t "$MONITOR_PANE" 2>/dev/null || true ;;
+        esac
+    fi
     rm -rf "$AGENT_CONFIG_TMP"
 }
 trap cleanup EXIT
 
-# Setup tmux monitor pane when running interactively
-if [ -n "$TMUX" ] && [ -t 1 ]; then
+# Setup monitor pane (Rex or tmux) when running interactively.
+# Rex takes priority: its env vars only exist inside a Rex terminal.
+MUX=""
+if [ -n "$REX_BLOCK" ] && command -v rex >/dev/null 2>&1; then
+    MUX="rex"
+elif [ -n "$TMUX" ]; then
+    MUX="tmux"
+fi
+
+MONITOR_CMD="tail -f $LOG_FILE | jq -R --unbuffered 'fromjson? // .'"
+if [ -n "$MUX" ] && [ -t 1 ]; then
     >"$LOG_FILE"
-    MONITOR_PANE=$(tmux split-window -h -P -F "#{pane_id}" \
-        "tail -f $LOG_FILE | jq -R --unbuffered 'fromjson? // .'")
-    tmux select-pane -L
-    echo "Monitor pane created: $MONITOR_PANE"
+    case "$MUX" in
+    rex)
+        MONITOR_PANE=$(rex split -b "$REX_BLOCK" --split=right --focus=false --json \
+            -- sh -c "$MONITOR_CMD" | jq -r '.block_ids[0]')
+        ;;
+    tmux)
+        MONITOR_PANE=$(tmux split-window -h -P -F "#{pane_id}" "$MONITOR_CMD")
+        tmux select-pane -L
+        ;;
+    esac
+    echo "Monitor pane created ($MUX): $MONITOR_PANE"
 else
-    echo "Warning: Not running in tmux, no live monitor available"
+    echo "Warning: Not running in Rex or tmux, no live monitor available"
     echo "You can monitor logs manually with: tail -f $LOG_FILE"
 fi
 
