@@ -385,7 +385,7 @@ run_bootstrap() {
     if gates_enabled && [ -f "$GATES_DIR/bootstrap_plan.py" ]; then
         local t0 rc
         t0=$(date +%s)
-        python3 "$GATES_DIR/bootstrap_plan.py" ACTION_PLAN.md
+        python3 "$GATES_DIR/bootstrap_plan.py" ACTION_PLAN.md </dev/null
         rc=$?
         if [ "$rc" -eq 0 ]; then
             record_gate_metrics bootstrap-script "" "$(( $(date +%s) - t0 ))"
@@ -403,7 +403,7 @@ run_verify() {
     if gates_enabled && [ -f "$GATES_DIR/verify.sh" ]; then
         local t0 rc
         t0=$(date +%s)
-        bash "$GATES_DIR/verify.sh"
+        bash "$GATES_DIR/verify.sh" </dev/null
         rc=$?
         if [ "$rc" -le 1 ]; then
             record_gate_metrics verify-script "" "$(( $(date +%s) - t0 ))"
@@ -424,7 +424,7 @@ gate_iteration() {
     . "$GATES_DIR/common.sh"
     local next id title t0 rc files out
     RALPH_RUN_TASK="" # set below once a task is assigned; read by record_metrics
-    next=$(bash "$GATES_DIR/next-task.sh") || return 1
+    next=$(bash "$GATES_DIR/next-task.sh" </dev/null) || return 1
     id=$(jq -r .id <<<"$next")
     title=$(jq -r .title <<<"$next")
     local phase claimed=0 parent
@@ -433,7 +433,7 @@ gate_iteration() {
     # The loop claims the task and hands over what the agent would otherwise fetch with
     # `bd show` / `bd list` (several turns and tens of KiB of tool output per run).
     RALPH_RUN_TASK="$id"
-    if [ "$phase" != "test" ] && bd update "$id" --claim >/dev/null 2>&1; then claimed=1; fi
+    if [ "$phase" != "test" ] && bd update "$id" --claim </dev/null >/dev/null 2>&1; then claimed=1; fi
     {
         echo "ASSIGNED TASK: $id — $title"
         if [ "$claimed" = 1 ]; then
@@ -466,7 +466,7 @@ gate_iteration() {
     case "$title" in
     "[test]"*)
         t0=$(date +%s)
-        bash "$GATES_DIR/test-gate.sh" "$id"
+        bash "$GATES_DIR/test-gate.sh" "$id" </dev/null
         rc=$?
         if [ "$rc" -eq 0 ]; then
             record_gate_metrics test-gate "$id" "$(( $(date +%s) - t0 ))"
@@ -488,7 +488,7 @@ gate_iteration() {
         files=$(bd_task_json "$id" | jq -r '.description // ""' | parse_file_list)
         [ -n "$files" ] || files=$(git status --porcelain | grep -vE '^( D|D )' | sed -E 's/^...//' | grep -vE '^(ralph-evidence/|ACTION_PLAN|\.beads)')
         # shellcheck disable=SC2086 # one path per word
-        out=$(bash "$GATES_DIR/static-gate.sh" $files)
+        out=$(bash "$GATES_DIR/static-gate.sh" $files </dev/null)
         rc=$?
         {
             echo ""

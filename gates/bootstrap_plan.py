@@ -114,7 +114,7 @@ def blockers_of(d, titles):
 
 
 def bd(*args):
-    r = subprocess.run(["bd", *args], capture_output=True, text=True)
+    r = subprocess.run(["bd", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)  # never wait for a TTY
     if r.returncode:
         raise RuntimeError(f"bd {' '.join(args[:2])} failed: {r.stderr.strip() or r.stdout.strip()}")
     return r.stdout

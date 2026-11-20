@@ -170,7 +170,7 @@ if ! commit_out=$(git commit -q -m "$msg" 2>&1); then
     fallback "tests passed (exit 0, evidence $evidence) but 'git commit' failed. DO NOT re-run the tests." "$commit_out"
 fi
 sha=$(git rev-parse --short HEAD)
-leftover=$(git status --porcelain | grep -vE '^\?\?' || true)
+leftover=$(git status --porcelain | grep -vE '^\?\?| (ACTION_PLAN|\.beads)' || true)
 
 actable=$(grep -E '^AC[0-9]+ \|' <<<"$desc" | sed -E "s/\| PENDING \|/| MET     |/; s/TEST: ([^ ]+) — to run in \[test\]/TEST: \1 — passed in gate run (exit 0), evidence $evidence/")
 bd close "$TASK_ID" --reason "Tests passed ($cmd, exit 0, ${elapsed}s). Evidence: $evidence. Commit: $sha ($msg).
