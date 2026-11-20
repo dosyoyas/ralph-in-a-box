@@ -245,9 +245,13 @@ docker run $DOCKER_TTY_FLAGS --rm \
     ${MAX_ITERATIONS:+-e "MAX_ITERATIONS=$MAX_ITERATIONS"} \
     ${MAX_COST:+-e "MAX_COST=$MAX_COST"} \
     ${AGENT_TIMEOUT:+-e "AGENT_TIMEOUT=$AGENT_TIMEOUT"} \
+    ${RALPH_GATES:+-e "RALPH_GATES=$RALPH_GATES"} \
+    ${TEST_GATE_TIMEOUT:+-e "TEST_GATE_TIMEOUT=$TEST_GATE_TIMEOUT"} \
+    ${RALPH_TEST_CMD:+-e "RALPH_TEST_CMD=$RALPH_TEST_CMD"} \
     \
     `# Script and task definition - read-only` \
     -v "$RALPH_DIR/ralph-loop.sh:/opt/ralph/ralph-loop.sh:ro" \
+    -v "$RALPH_DIR/gates:/opt/ralph/gates:ro" \
     -v "$DO_TASK_SOURCE:/opt/ralph/DO_TASK.md:ro" \
     -v "$RALPH_DIR/BOOTSTRAP.md:/opt/ralph/BOOTSTRAP.md:ro" \
     -v "$RALPH_DIR/VERIFY.md:/opt/ralph/VERIFY.md:ro" \

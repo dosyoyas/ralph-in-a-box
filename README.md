@@ -343,3 +343,26 @@ Implementation of the Ralph technique by Geoffrey Huntley:
 
 - [Don't waste your backpressure](https://banay.me/dont-waste-your-backpressure/) — why constraining AI agents improves output quality
 - [Introducing Beads: a coding agent memory system](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a) — the design behind beads
+
+## Deterministic gates (fewer agent runs)
+
+The loop does the mechanical work itself and only wakes the agent when judgement is needed (`gates/`, mounted at
+`/opt/ralph/gates`; disable all with `RALPH_GATES=0`). Same gates for the Python and Rust images (`RALPH_FLAVOR=generic`).
+
+| Step | Done by | Agent fallback |
+| --- | --- | --- |
+| Plan → beads tasks | `gates/bootstrap_plan.py` | the BOOTSTRAP agent, when the plan cannot be parsed with certainty |
+| Task claim + context | the loop claims the task and puts its description, the Epic view and the working tree in the prompt (`# LOOP CONTEXT`) | — |
+| Prompt size | `build-prompt.sh` keeps only the phase's section of `DO_TASK` | — |
+| `[review]` lint + integrity | `static-gate.sh` (ruff, pyrefly, biome, gitleaks; `cargo fmt` / `clippy` for Rust) and `test-integrity.sh` run first; the result is injected into the review prompt | — (the agent fixes findings) |
+| `[test]` run, commit, close | `test-gate.sh`: re-runs the static gate, runs the tests, writes `ralph-evidence/<epic>-test-run.log`, commits the Epic's files, closes `[test]`/Epic; on failure creates the `[impl] RETRY` task | tests weakened (integrity gate), unknown test setup, RETRY limit reached, commit failure |
+| Final report | `verify.sh` checks coverage (closed deliverables vs the archived plan) | — |
+
+- Test command: `RALPH_TEST_CMD`, or a `RALPH_TEST_CMD: <cmd>` line in `AGENTS.md`, or a backticked `pytest` / `cargo test`
+  command on an `AGENTS.md` line about tests, or the language default (`python -m pytest -v` / `cargo test`). An `AGENTS.md`
+  with a testing section the gate cannot interpret makes the agent run the tests.
+- Environment errors in the test output (cargo registry unreachable, Docker down, ...) halt the loop (exit 6).
+- `TEST_GATE_TIMEOUT` (default 3600 s) bounds the test run.
+- Per-run cost/usage is appended to `/tmp/ralph_logs/claude_metrics_<project>.jsonl`; summarise it with `ralph-report.py`.
+- Gate tests: `gates/tests/run-tests.sh` (needs `bd`, `jq`, `git`, `python3`; no Docker). `gates/` is shared verbatim with
+  `ralph_otxb`; keep both copies identical.
