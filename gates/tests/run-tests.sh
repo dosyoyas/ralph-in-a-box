@@ -8,6 +8,7 @@ done
 
 pass=0 fail=0 TMP=$(mktemp -d /tmp/ralph-gates-test-XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
+export RALPH_NO_EXT=1 # the core tests run without gates/ext.sh; the extension tests (below) turn it back on
 export GATE_POLL_SECONDS=0 GATE_CONTEXT_FILE="$TMP/context.md" GATE_ENV_ERROR_FILE="$TMP/env-error"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -423,6 +424,7 @@ check "rust files run cargo fmt and clippy" grep -q 'PASS cargo clippy' <<<"$out
 rm -f "$STUBS/cargo" "$STUBS/cargo.log"
 
 # Extension tests (present only where gates/ext.sh exists)
+unset RALPH_NO_EXT
 [ -f "$GATES/tests/ext-tests.sh" ] && . "$GATES/tests/ext-tests.sh"
 
 echo

@@ -126,4 +126,4 @@ filter_committable() {
 # Optional extension (see the top of this file).
 _ralph_gates_self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=/dev/null
-[ -f "$_ralph_gates_self/ext.sh" ] && . "$_ralph_gates_self/ext.sh"
+[ -z "${RALPH_NO_EXT:-}" ] && [ -f "$_ralph_gates_self/ext.sh" ] && . "$_ralph_gates_self/ext.sh" # RALPH_NO_EXT=1: core only (used by the core tests)
