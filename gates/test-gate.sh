@@ -76,7 +76,6 @@ epic_title=$(bd_task_json "$epic" | jq -r '.title // ""' | sed -E 's/^Epic:[ ]*/
 branch_ok || fallback "the current branch '$(git branch --show-current)' is not the required one ($(ralph_conf RALPH_REQUIRE_BRANCH)); make NO commit, record 'BLOCKED: wrong branch' in BLOCKERS.md and end the task"
 
 cmd=$(test_command) || fallback "the gate does not know how to run this project's tests (set 'RALPH_TEST_CMD: <command>' in the project profile or AGENTS.md; 'agent' means the agent runs them)"
-[[ "$cmd" != *"{modules}"* ]] || fallback "RALPH_TEST_CMD uses {modules}, which this gate does not support yet"
 if [[ "$cmd" == *"{package}"* ]]; then
     # one run per package: the first path component of the task's files (monorepo layout)
     pkgs=$(parse_file_list <<<"$desc" | filter_committable | awk -F/ 'NF > 1 {print $1}' | sort -u)
@@ -84,6 +83,30 @@ if [[ "$cmd" == *"{package}"* ]]; then
     joined=""
     for pkg in $pkgs; do joined="${joined:+$joined && }${cmd//\{package\}/$pkg}"; done
     cmd="$joined"
+fi
+if [[ "$cmd" == *"{modules}"* || "$cmd" == *"{test_files}"* ]]; then
+    # {test_files}: the task's test files (.py) under RALPH_TEST_ROOT; {modules}: the same as dotted module names
+    # relative to that root (what a unittest-style runner takes). Without any, the agent runs the tests: the whole
+    # suite would be the only alternative and it is too slow to run unasked.
+    root=$(ralph_conf RALPH_TEST_ROOT || true)
+    root=${root%/}
+    tfiles="" mods=""
+    while IFS= read -r f; do
+        is_test_path "$f" || continue
+        case "$f" in *.py) ;; *) continue ;; esac
+        if [ -n "$root" ]; then
+            [[ "$f" == "$root"/* ]] || continue
+            rel=${f#"$root"/}
+        else
+            rel=$f
+        fi
+        tfiles="$tfiles $f"
+        rel=${rel%.py}
+        mods="$mods ${rel//\//.}"
+    done < <(parse_file_list <<<"$desc" | filter_committable)
+    [ -n "$tfiles" ] || fallback "RALPH_TEST_CMD needs test files but the task lists none${root:+ under $root/}"
+    cmd=${cmd//\{test_files\}/${tfiles# }}
+    cmd=${cmd//\{modules\}/${mods# }}
 fi
 
 integrity=$("$GATES_DIR/test-integrity.sh")
@@ -129,6 +152,12 @@ wait "$pid"
 rc=$?
 elapsed=$(($(date +%s) - start))
 say "tests finished: exit $rc in ${elapsed}s"
+# Some runners exit 0 when nothing ran ("Ran 0 tests"): RALPH_TEST_FAIL_PATTERN marks such output as a failure.
+fail_re=$(ralph_conf RALPH_TEST_FAIL_PATTERN || true)
+if [ "$rc" -eq 0 ] && [ -n "$fail_re" ] && grep -Eq "$fail_re" "$full"; then
+    say "the output matches RALPH_TEST_FAIL_PATTERN ($fail_re): the run counts as failed"
+    rc=1
+fi
 
 {
     echo "# test gate: $cmd"
@@ -194,7 +223,10 @@ for f in $(git diff --cached --name-only); do is_test_path "$f" || type=feat; do
 RALPH_FEATURE_TAG=$(epic_tag "$epic")
 export RALPH_FEATURE_TAG
 tag=$(commit_prefix)
-desc_line=$(printf '%s' "$epic_title" | awk '{print tolower(substr($0,1,1)) substr($0,2)}' | head -c 100)
+title_for_msg=$epic_title
+# the plan title often carries the tag in a suffix ("... (ticket X)"): it is already the prefix, do not repeat it
+[ -n "$RALPH_FEATURE_TAG" ] && title_for_msg=${title_for_msg%%' ('*"$RALPH_FEATURE_TAG"*')'}
+desc_line=$(printf '%s' "$title_for_msg" | awk '{print tolower(substr($0,1,1)) substr($0,2)}' | head -c 100)
 msg="${tag:+$tag }$type: $desc_line"
 if ! commit_out=$(git commit -q -m "$msg" 2>&1); then
     fallback "tests passed (exit 0, evidence $evidence) but 'git commit' failed. DO NOT re-run the tests." "$commit_out"

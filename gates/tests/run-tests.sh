@@ -182,6 +182,29 @@ setup_test_task gate_feature_tag
 bd update "$EID" --description "TAG: TK-5" >/dev/null 2>&1
 RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
 check "the Feature tag prefixes the commit message" eq "$(git log -1 --format=%s)" "TK-5 test: add parser"
+setup_test_task gate_tag_in_title
+bd update "$EID" --title "Epic: Add parser (ticket TK-6)" --description "TAG: TK-6" >/dev/null 2>&1
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "the tag is not repeated in the message when the Feature title carries it" eq "$(git log -1 --format=%s)" "TK-6 test: add parser"
+
+setup_test_task gate_modules
+mkdir -p python/pkg/tests && echo 'x = 1' >python/pkg/m.py && printf 'class T:\n    def test_x(self): pass\n' >python/pkg/tests/test_m.py && echo 'y = 1' >other_test.py
+bd update "$TID" --description "FILES:
+- python/pkg/m.py
+- python/pkg/tests/test_m.py
+- other_test.py
+
+RETRY: 0" >/dev/null 2>&1
+RALPH_TEST_ROOT=python RALPH_TEST_CMD="echo mods={modules} files={test_files} >$TMP/mods.txt" bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "{modules} / {test_files} come from the task's test files under RALPH_TEST_ROOT (exit 0)" eq "$?" 0
+check "dotted modules are relative to the root, files are not" eq "$(cat "$TMP/mods.txt")" "mods=pkg.tests.test_m files=python/pkg/tests/test_m.py"
+setup_test_task gate_no_modules
+: >"$GATE_CONTEXT_FILE"
+RALPH_TEST_ROOT=python RALPH_TEST_CMD='echo {modules}' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "{modules} without test files under the root hands the task to the agent (exit 10)" eq "$?" 10
+setup_test_task gate_zero_tests
+RALPH_TEST_FAIL_PATTERN='Ran 0 tests' RALPH_TEST_CMD='echo "Ran 0 tests"; exit 0' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "RALPH_TEST_FAIL_PATTERN turns an exit-0 run into a failure (RETRY created)" eq "$(bd list --all --json | jq '[.[] | select(.title | startswith("[impl] RETRY"))] | length')" 1
 
 setup_test_task gate_nested_ids
 mkdir -p src/test/tests && git mv -f tests/test_a.py src/test/tests/test_a.py 2>/dev/null || mv tests/test_a.py src/test/tests/test_a.py
