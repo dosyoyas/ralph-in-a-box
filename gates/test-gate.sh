@@ -191,6 +191,8 @@ fi
 
 type=test
 for f in $(git diff --cached --name-only); do is_test_path "$f" || type=feat; done
+RALPH_FEATURE_TAG=$(epic_tag "$epic")
+export RALPH_FEATURE_TAG
 tag=$(commit_prefix)
 desc_line=$(printf '%s' "$epic_title" | awk '{print tolower(substr($0,1,1)) substr($0,2)}' | head -c 100)
 msg="${tag:+$tag }$type: $desc_line"

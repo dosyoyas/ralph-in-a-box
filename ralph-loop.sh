@@ -382,7 +382,9 @@ run_bootstrap() {
     if gates_enabled && [ -f "$GATES_DIR/bootstrap_plan.py" ]; then
         local t0 rc
         t0=$(date +%s)
-        python3 "$GATES_DIR/bootstrap_plan.py" ACTION_PLAN.md </dev/null
+        # shellcheck source=gates/common.sh
+        . "$GATES_DIR/common.sh"
+        RALPH_FEATURE_TAG_RE=$(ralph_conf RALPH_FEATURE_TAG_RE 2>/dev/null) python3 "$GATES_DIR/bootstrap_plan.py" ACTION_PLAN.md </dev/null
         rc=$?
         if [ "$rc" -eq 0 ]; then
             record_gate_metrics bootstrap-script "" "$(( $(date +%s) - t0 ))"
@@ -468,6 +470,10 @@ gate_iteration() {
         echo ""
         echo "TASK (from beads, verbatim):"
         bd_task_json "$id" | jq -r '"status: \(.status)\nparent: \(.parent // "-")\n\n\(.description // "")" + (if .notes then "\n\nNOTES:\n\(.notes)" else "" end)'
+        if [ -n "$parent" ] && [ -n "$(epic_tag "$parent")" ]; then
+            echo ""
+            echo "COMMIT TAG for this Epic (named by its Feature in the plan; use it as the commit prefix): $(epic_tag "$parent")"
+        fi
         if [ -n "$parent" ]; then
             echo ""
             echo "EPIC VIEW (siblings; [status] id title :: close reason[0:80]):"
@@ -700,7 +706,7 @@ protect_after() {
     fi
 }
 
-# JIRA ticket every beads issue of this run is labelled with, for traceability
+# Ticket key every beads issue of this run is labelled with, for traceability
 # (`bd list -l <TICKET>`). The beads prefix names the repo, so it cannot carry the
 # ticket. Taken from the branch (its leading ticket, else the whole name); only on
 # main/master, where the branch says nothing, from AGENTS.md. Empty = no label.

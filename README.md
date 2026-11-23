@@ -372,6 +372,6 @@ The loop does the mechanical work itself and only wakes the agent when judgement
 ### Project settings
 
 The gates read optional `KEY: value` lines from the project's `AGENTS.md`: `RALPH_TEST_CMD` (`agent` = the agent runs the
-tests), `RALPH_REQUIRE_BRANCH` (the loop stops with exit 8 on another branch), `RALPH_STATIC_GATE` (`enforce|advisory|off`),
+tests), `RALPH_REQUIRE_BRANCH` (the loop stops with exit 8 on another branch), `RALPH_FEATURE_TAG_RE` (a tag searched in each plan Feature title and used as the commit prefix), `RALPH_STATIC_GATE` (`enforce|advisory|off`),
 `RALPH_EVIDENCE_DIR`, `RALPH_NO_COMMIT` (globs the gates never commit) and `RALPH_ENV_ERROR_PATTERN`. Environment variables
 of the same name take precedence.

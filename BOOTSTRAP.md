@@ -17,8 +17,8 @@ After bootstrapping, EXIT IMMEDIATELY. The loop will pick up the first task on t
 
 ### Step 1: Initialize beads (if needed)
 
-The beads prefix names the repository and never changes: it is the workspace directory name. Never use a JIRA
-ticket or the branch as the prefix — tickets change from plan to plan. Traceability to the ticket is a label the loop
+The beads prefix names the repository and never changes: it is the workspace directory name. Never use a ticket
+key or the branch as the prefix — tickets change from plan to plan. Traceability to the ticket is a label the loop
 adds to every issue it sees created (`bd list -l <TICKET>`); do not add or remove that label yourself.
 
 ```bash

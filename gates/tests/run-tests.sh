@@ -94,6 +94,18 @@ printf '## Feature 1: X\n### D\n**Blocked by:** Nonexistent thing\n\nbody\n\n- [
 python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
 check "unresolvable Blocked by exits 2" eq "$?" 2
 
+new_repo tagged
+printf '%s\n' '## Feature 1: First (ticket TK-12)' '### One' '**Blocked by:** None' '' 'x' '' '- [ ] a' '' '## Feature 2: Second' '### Two' '**Blocked by:** None' '' 'see TK-3003' '' '- [ ] b' >ACTION_PLAN.md
+RALPH_FEATURE_TAG_RE='TK-[0-9]+' python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
+epic1=$(bd list --all --json | jq -r '.[] | select(.title | startswith("Epic: First")) | .description // ""')
+epic2=$(bd list --all --json | jq -r '.[] | select(.title | startswith("Epic: Second")) | .description // ""')
+check "RALPH_FEATURE_TAG_RE stores the tag of the Feature title on its Epic" eq "$epic1" "TAG: TK-12"
+check "a Feature title without a match gets no tag" eq "$epic2" ""
+new_repo untagged
+printf '%s\n' '## Feature 1: First (ticket TK-12)' '### One' '**Blocked by:** None' '' 'x' '' '- [ ] a' >ACTION_PLAN.md
+python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
+check "without RALPH_FEATURE_TAG_RE no tag is stored" eq "$(bd list --all --json | jq -r '.[] | select(.title | startswith("Epic: First")) | .description // ""')" ""
+
 echo "next-task.sh"
 new_repo next
 printf '%s' "$PLAN" >ACTION_PLAN.md
@@ -165,6 +177,11 @@ check "commits the listed files (no prefix by default)" eq "$(git log -1 --forma
 check "closes the [test] task" eq "$(bd show "$TID" --json | jq -r 'if type=="array" then .[0].status else .status end')" closed
 check "closes the Epic when nothing else is open" eq "$(bd show "$EID" --json | jq -r 'if type=="array" then .[0].status else .status end')" closed
 check "writes the evidence log" test -s "$RALPH_EVIDENCE_DIR/${EID}-test-run.log"
+
+setup_test_task gate_feature_tag
+bd update "$EID" --description "TAG: TK-5" >/dev/null 2>&1
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "the Feature tag prefixes the commit message" eq "$(git log -1 --format=%s)" "TK-5 test: add parser"
 
 setup_test_task gate_nested_ids
 mkdir -p src/test/tests && git mv -f tests/test_a.py src/test/tests/test_a.py 2>/dev/null || mv tests/test_a.py src/test/tests/test_a.py

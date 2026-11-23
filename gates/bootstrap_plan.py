@@ -160,8 +160,13 @@ def main():
         if not os.path.isdir(".beads"):
             bd("init", "--stealth", "-p", os.path.basename(os.getcwd()))
         ids = {}
+        tag_re = os.environ.get("RALPH_FEATURE_TAG_RE", "")  # e.g. a ticket pattern; searched in each Feature title
         for ei, feat in enumerate(features):
-            epic = create(f"Epic: {feat['title']}", kind="epic", priority=ei)
+            found = re.search(tag_re, feat["title"]) if tag_re else None
+            epic = create(
+                f"Epic: {feat['title']}", kind="epic", priority=ei,
+                description=f"TAG: {found.group(0)}" if found else None,
+            )
             for ti, d in enumerate(feat["deliverables"]):
                 ids[d["title"]] = create(
                     f"[impl] {d['title']}", parent=epic, priority=ti, description=task_description(d, shared)

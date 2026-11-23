@@ -21,8 +21,14 @@ parse_file_list() {
     ' | sed -E 's/^[[:space:]]*[-*][[:space:]]*//; s/`//g' | tr -s ',[:space:]' '\n' | sed '/^$/d' | sort -u
 }
 
-# Text placed before "type: description" in the commits the gates make (e.g. a ticket key). None by default.
-commit_prefix() { :; }
+# Tag the plan attached to a Feature (RALPH_FEATURE_TAG_RE matched in its title), stored on the Epic as "TAG: x".
+epic_tag() {
+    bd_task_json "$1" | jq -r '.description // ""' | sed -n 's/^TAG:[[:space:]]*//p' | head -n 1
+}
+
+# Text placed before "type: description" in the commits the gates make: the tag of the Feature being committed
+# (RALPH_FEATURE_TAG, set by test-gate.sh), if any. Extensions may add rules.
+commit_prefix() { printf '%s' "${RALPH_FEATURE_TAG:-}"; }
 
 # Project settings come from, in order: the environment, the project's profile (RALPH_PROFILE_FILE, kept in the
 # ralph repo so the project itself is not touched), then "KEY: value" lines in the project's AGENTS.md.
