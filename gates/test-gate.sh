@@ -2,7 +2,7 @@
 # test-gate.sh TASK_ID — handle a [test] task without the agent.
 #
 # Runs the project's tests (background + progress), writes the evidence log, then:
-#   pass -> commits the Epic's files (JIRA-prefixed) and closes [test] and the Epic
+#   pass -> commits the Epic's files and closes [test] and the Epic
 #   fail -> creates the [impl] RETRY task with the last failure lines and closes [test]
 #
 # Exit codes:
@@ -18,7 +18,8 @@ CONTEXT=${GATE_CONTEXT_FILE:-/tmp/ralph-gate-context.md}
 EVID=$(evidence_dir)
 MAX_RETRIES=${MAX_RETRIES:-2}
 TIMEOUT=${TEST_GATE_TIMEOUT:-3600}
-ENV_ERROR_RE='TokenRetrievalError|InvalidGrantException|ExpiredTokenException|Cannot connect to the Docker daemon|Is the docker daemon running|error: failed to (get|fetch|download)|Could not resolve host|Temporary failure in name resolution|otxb_build.py: (command )?not found|exit code 137|Killed$|INFRA ERROR'
+ENV_ERROR_RE='TokenRetrievalError|InvalidGrantException|ExpiredTokenException|Cannot connect to the Docker daemon|Is the docker daemon running|error: failed to (get|fetch|download)|Could not resolve host|Temporary failure in name resolution|exit code 137|Killed$|INFRA ERROR'
+[ -n "$ENV_ERROR_EXTRA" ] && ENV_ERROR_RE="$ENV_ERROR_RE|$ENV_ERROR_EXTRA" # from the optional gates/ext.sh
 extra_env=$(ralph_conf RALPH_ENV_ERROR_PATTERN || true) # project-specific environment errors (regex)
 [ -n "$extra_env" ] && ENV_ERROR_RE="$ENV_ERROR_RE|$extra_env"
 
@@ -190,7 +191,7 @@ fi
 
 type=test
 for f in $(git diff --cached --name-only); do is_test_path "$f" || type=feat; done
-tag=$(jira_tag)
+tag=$(commit_prefix)
 desc_line=$(printf '%s' "$epic_title" | awk '{print tolower(substr($0,1,1)) substr($0,2)}' | head -c 100)
 msg="${tag:+$tag }$type: $desc_line"
 if ! commit_out=$(git commit -q -m "$msg" 2>&1); then

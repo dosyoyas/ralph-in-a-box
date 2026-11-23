@@ -7,7 +7,7 @@ trap 'rm -rf "$tmp"' EXIT
 bd list --all --json >"$tmp/all" 2>/dev/null || exit 10
 [ -s "$tmp/all" ] || exit 10
 
-if [ "${RALPH_AUDIT:-1}" = "0" ]; then
+if [ "${RALPH_AUDIT:-0}" = "0" ]; then
     # No [audit] phase in this loop: the plan was turned into tasks 1:1, so check coverage by counting.
     read -r total closed open_work blocked < <(jq -r '
         [.[] | select(.title | test("^\\[impl\\]")) | select(.title | test("RETRY|GAP") | not)] as $d

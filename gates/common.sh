@@ -1,9 +1,9 @@
 #!/bin/bash
 # Shared helpers for the ralph gates. Source it: . "$GATES_DIR/common.sh"
 
-# Flavor of the loop: "otxb" (tests via otxb_build.py, JIRA-prefixed commits) or "generic" (pytest / cargo test).
-# Set by ralph-loop.sh.
-RALPH_FLAVOR="${RALPH_FLAVOR:-otxb}"
+# Optional extension: if gates/ext.sh exists it is sourced at the end of this file and may redefine
+# default_test_command and commit_prefix, and set ENV_ERROR_EXTRA (a regex of extra environment errors).
+ENV_ERROR_EXTRA=""
 
 # Task JSON for an id (bd show may return an object or a one-element array).
 bd_task_json() {
@@ -21,24 +21,8 @@ parse_file_list() {
     ' | sed -E 's/^[[:space:]]*[-*][[:space:]]*//; s/`//g' | tr -s ',[:space:]' '\n' | sed '/^$/d' | sort -u
 }
 
-# JIRA tag for commit messages (otxb flavor only).
-# The branch decides: on a feature branch the ticket in its name, or no tag at all when it has none (AGENTS.md
-# often holds the LAST ticket worked on, which would be wrong for this branch). Only on main/master, or with no
-# branch (detached HEAD), AGENTS.md is read: a "JIRA:" / "JIRA_TAG:" / "Ticket:" line first, else the first
-# ticket-looking token ("UTF-8" would also match, hence the preference for the labelled line).
-jira_tag() {
-    [ "$RALPH_FLAVOR" = "otxb" ] || return 0
-    local branch tag=""
-    branch=$(git branch --show-current 2>/dev/null)
-    if [ -n "$branch" ] && [ "$branch" != "main" ] && [ "$branch" != "master" ]; then
-        tag=$(printf '%s' "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -n 1)
-        printf '%s' "$tag"
-        return 0
-    fi
-    tag=$(grep -m1 -E '^[[:space:]]*(JIRA|JIRA_TAG|Ticket)[^:]*:' AGENTS.md 2>/dev/null | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -n 1)
-    [ -z "$tag" ] && tag=$(grep -oE '[A-Z][A-Z0-9]+-[0-9]+' AGENTS.md 2>/dev/null | head -n 1)
-    printf '%s' "$tag"
-}
+# Text placed before "type: description" in the commits the gates make (e.g. a ticket key). None by default.
+commit_prefix() { :; }
 
 # Project settings come from, in order: the environment, the project's profile (RALPH_PROFILE_FILE, kept in the
 # ralph repo so the project itself is not touched), then "KEY: value" lines in the project's AGENTS.md.
@@ -95,11 +79,8 @@ branch_ok() {
 static_mode() { ralph_conf RALPH_STATIC_GATE 2>/dev/null || printf 'enforce'; }
 
 # Command that runs the project's tests, or fail (rc 1) when the agent has to run them.
-# Order: RALPH_TEST_CMD (env > profile > AGENTS.md line; the value "agent" means "the agent runs the tests"), then per flavor:
-#   otxb:    `otxb_build.py --test`, unless AGENTS.md forbids it or documents another procedure (guard)
-#   generic: a backticked pytest / cargo test command on an AGENTS.md line about tests; else the
-#            language default (cargo test / python -m pytest -v), unless AGENTS.md has a testing
-#            section the gate cannot interpret
+# RALPH_TEST_CMD (env > profile > AGENTS.md line) wins; the value "agent" means "the agent runs the tests".
+# Otherwise default_test_command decides.
 test_command() {
     local line
     if line=$(ralph_conf RALPH_TEST_CMD); then
@@ -107,20 +88,13 @@ test_command() {
         printf '%s' "$line"
         return 0
     fi
-    if [ "$RALPH_FLAVOR" = "otxb" ]; then
-        if [ -f AGENTS.md ]; then
-            # a line that recommends it, as opposed to one that forbids it ("do not use otxb_build.py --test")
-            if ! grep -iE 'otxb_build\.py --test' AGENTS.md | grep -ivqE "(do not|don't|never|not)[^.]*otxb_build"; then
-                grep -iqE "(do not|don't|never|not)[^.]*otxb_build" AGENTS.md && return 1
-                # AGENTS.md documents another way to test (e.g. "TESTING: use ./build.sh pkg"): do not guess
-                if grep -iE '(testing|tests?)\b.*\b(use|run)\b|\b(use|run)\b.*\btests?\b' AGENTS.md | grep -qvi 'otxb_build'; then
-                    return 1
-                fi
-            fi
-        fi
-        printf '%s' 'otxb_build.py --test'
-        return 0
-    fi
+    default_test_command
+}
+
+# Language defaults: a backticked pytest / cargo test command on an AGENTS.md line about tests; else cargo test /
+# python -m pytest -v by project files, unless AGENTS.md has a testing section the gate cannot interpret.
+default_test_command() {
+    local line
     line=$(grep -iE 'test' AGENTS.md 2>/dev/null | grep -oE '`[^`]*(pytest|cargo test)[^`]*`' | head -n 1 | tr -d '`')
     if [ -n "$line" ]; then printf '%s' "$line"; return 0; fi
     if [ -f AGENTS.md ] && grep -qiE '^#+[[:space:]].*test' AGENTS.md; then return 1; fi
@@ -148,3 +122,8 @@ filter_committable() {
     done
     return 0
 }
+
+# Optional extension (see the top of this file).
+_ralph_gates_self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+[ -f "$_ralph_gates_self/ext.sh" ] && . "$_ralph_gates_self/ext.sh"

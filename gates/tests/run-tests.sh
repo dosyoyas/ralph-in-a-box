@@ -71,7 +71,7 @@ echo "bootstrap_plan.py"
 new_repo boot
 printf '%s' "$PLAN" >ACTION_PLAN.md
 python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
-check "creates epics, impl tasks and the audit task" eq "$(bd list --all --json | jq 'length')" 7
+check "creates epics and impl tasks (no audit by default)" eq "$(bd list --all --json | jq 'length')" 5
 check "titles use [impl] prefix" eq "$(bd list --all --json | jq '[.[] | select(.title | startswith("[impl] "))] | length')" 3
 desc=$(bd list --all --json | jq -r '.[] | select(.title == "[impl] Add parser") | .description')
 check "copies numbered steps verbatim" grep -q '2. step two' <<<"$desc"
@@ -79,7 +79,11 @@ check "numbers acceptance criteria (with continuation)" grep -q 'AC2: parses b w
 check "copies shared context into the task" grep -q 'Use pytest only' <<<"$desc"
 check "copies the plan overview into the task" grep -q 'Overview constraint: no prod changes' <<<"$desc"
 check "only the first impl is ready (plus epics)" eq "$(bd ready --json | jq '[.[] | select(.title | test("^\\[(impl|audit)\\]"))] | length')" 1
-check "audit task is blocked until every impl is done" eq "$(bd ready --json | jq '[.[] | select(.title | startswith("[audit]"))] | length')" 0
+new_repo withaudit
+printf '%s' "$PLAN" >ACTION_PLAN.md
+RALPH_AUDIT=1 python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
+check "RALPH_AUDIT=1 adds the audit epic and task" eq "$(bd list --all --json | jq 'length')" 7
+check "the audit task is blocked until every impl is done" eq "$(bd ready --json | jq '[.[] | select(.title | startswith("[audit]"))] | length')" 0
 new_repo bad
 printf '# Plan\n\nJust prose, no features.\n' >ACTION_PLAN.md
 python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
@@ -151,12 +155,12 @@ SUMMARY:
 parser
 
 RETRY: ${2:-0}")
-    git checkout -q -b feature/LABS-1234-x
+    git checkout -q -b feature/work-x
 }
 setup_test_task gate_pass
 RALPH_TEST_CMD='echo "3 passed"; exit 0' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
 check "passing tests exit 0" eq "$?" 0
-check "commits the listed files with the JIRA prefix" grep -q '^LABS-1234 test: add parser' <(git log -1 --format=%s)
+check "commits the listed files (no prefix by default)" eq "$(git log -1 --format=%s)" "test: add parser"
 check "closes the [test] task" eq "$(bd show "$TID" --json | jq -r 'if type=="array" then .[0].status else .status end')" closed
 check "closes the Epic when nothing else is open" eq "$(bd show "$EID" --json | jq -r 'if type=="array" then .[0].status else .status end')" closed
 check "writes the evidence log" test -s "$RALPH_EVIDENCE_DIR/${EID}-test-run.log"
@@ -278,7 +282,7 @@ RALPH_STATIC_GATE=advisory RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "
 check "RALPH_STATIC_GATE=advisory does not block (exit 0, committed)" eq "$(git log --oneline | wc -l | tr -d ' ')" 2
 printf '#!/bin/bash\nexit 0\n' >"$STUBS/ruff"
 setup_test_task gate_branch
-printf 'RALPH_REQUIRE_BRANCH: OTXP-5707\n' >AGENTS.md
+printf 'RALPH_REQUIRE_BRANCH: release-[0-9]+\n' >AGENTS.md
 : >"$GATE_CONTEXT_FILE"
 RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
 check "a wrong branch hands the task back to the agent (exit 10)" eq "$?" 10
@@ -296,13 +300,13 @@ check "environment errors exit 20" eq "$?" 20
 check "the task is released" eq "$(bd show "$TID" --json | jq -r 'if type=="array" then .[0].status else .status end')" open
 
 setup_test_task gate_unknown
-printf '# Agents\nRun tests with make magic.\n' >AGENTS.md
+printf '# Agents\n## Testing\nUse make magic.\n' >AGENTS.md
 env -u RALPH_TEST_CMD bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
 check "unknown test setup falls back to the agent (exit 10)" eq "$?" 10
 
 setup_test_task gate_integrity
 git checkout -q main 2>/dev/null || git checkout -q master
-git checkout -q feature/LABS-1234-x
+git checkout -q feature/work-x
 printf 'def test_a():\n    assert 1 == 1\n' >tests/test_a.py && git add -A && git commit -q -m seed
 printf 'def test_a():\n    pass\n' >tests/test_a.py
 : >"$GATE_CONTEXT_FILE"
@@ -311,7 +315,7 @@ check "weakened tests fall back to the agent (exit 10)" eq "$?" 10
 check "context lists the finding" grep -q 'REMOVED/CHANGED assertion' "$GATE_CONTEXT_FILE"
 
 echo "build-prompt.sh"
-for DT in "$GATES/../DO_TASK_PYTHON_OTXB.md" "$GATES/../python/DO_TASK_PYTHON.md" "$GATES/../rust/DO_TASK_RUST.md"; do
+for DT in "$GATES/../python/DO_TASK_PYTHON.md" "$GATES/../rust/DO_TASK_RUST.md" "$GATES/../DO_TASK.md"; do
     [ -f "$DT" ] || continue
     name=$(basename "$DT")
     impl_prompt=$(bash "$GATES/build-prompt.sh" impl "$DT")
@@ -328,7 +332,8 @@ for DT in "$GATES/../DO_TASK_PYTHON_OTXB.md" "$GATES/../python/DO_TASK_PYTHON.md
     check "$name: the reduced prompt is much shorter" test "$(wc -l <<<"$impl_prompt")" -lt $(( $(wc -l <"$DT") * 8 / 10 ))
 done
 
-echo "verify.sh"
+echo "verify.sh (audit mode)"
+export RALPH_AUDIT=1
 verify_repo() { # -> a bootstrapped repo where every [impl] is closed
     new_repo "$1"
     printf '%s' "$PLAN" >ACTION_PLAN.md
@@ -358,64 +363,38 @@ bd close "$AUDIT" --reason "AC1 | MET | x" >/dev/null 2>&1
 mk "[impl] GAP: leftover" --type task --priority 0 --description x >/dev/null
 bash "$GATES/verify.sh" >/dev/null 2>&1
 check "an open GAP task fails (exit 1)" eq "$?" 1
+unset RALPH_AUDIT
 
-echo "project settings (env > profile > AGENTS.md) and the otxb test command guard"
+echo "project settings (env > profile > AGENTS.md)"
 new_repo conf
-otx() { (cd "$PWD" && bash -c ". '$GATES/common.sh'; test_command") 2>/dev/null; }
-check "no AGENTS.md: otxb default" eq "$(otx)" "otxb_build.py --test"
-printf '# Agents\nBe concise.\n' >AGENTS.md
-check "AGENTS.md silent about tests: otxb default" eq "$(otx)" "otxb_build.py --test"
-printf '# Agents\nRun `otxb_build.py --test` from the repo root.\n' >AGENTS.md
-check "AGENTS.md recommending it: otxb default" eq "$(otx)" "otxb_build.py --test"
-printf '**Do NOT use `otxb_build.py`** (not `otxb_build.py --test`, not any other subcommand).\n' >AGENTS.md
-check "AGENTS.md forbidding it: the agent runs the tests" eq "$(otx)" ""
-printf 'JIRA: LABS-1\n\n\\_\\*\\* TESTING: use ./build.sh otxb-core-aws to run the tests for otxb-core-aws\n' >AGENTS.md
-check "AGENTS.md documenting another procedure: the agent runs the tests" eq "$(otx)" ""
+tcmd() { bash -c ". '$GATES/common.sh'; test_command" 2>/dev/null; }
 printf '# Agents\nRALPH_TEST_CMD: make check\n' >AGENTS.md
-check "RALPH_TEST_CMD line in AGENTS.md" eq "$(otx)" "make check"
+check "RALPH_TEST_CMD line in AGENTS.md" eq "$(tcmd)" "make check"
 printf 'RALPH_TEST_CMD: ./build.sh {package}\n' >"$TMP/profile.conf"
-check "a profile wins over AGENTS.md" eq "$(RALPH_PROFILE_FILE="$TMP/profile.conf" otx)" "./build.sh {package}"
-check "the environment wins over the profile" eq "$(RALPH_TEST_CMD='env cmd' RALPH_PROFILE_FILE="$TMP/profile.conf" otx)" "env cmd"
+check "a profile wins over AGENTS.md" eq "$(RALPH_PROFILE_FILE="$TMP/profile.conf" tcmd)" "./build.sh {package}"
+check "the environment wins over the profile" eq "$(RALPH_TEST_CMD='env cmd' RALPH_PROFILE_FILE="$TMP/profile.conf" tcmd)" "env cmd"
 printf 'RALPH_TEST_CMD: agent\n' >"$TMP/profile.conf"
-check "RALPH_TEST_CMD: agent hands the tests to the agent" eq "$(RALPH_PROFILE_FILE="$TMP/profile.conf" otx)" ""
+check "RALPH_TEST_CMD: agent hands the tests to the agent" eq "$(RALPH_PROFILE_FILE="$TMP/profile.conf" tcmd)" ""
 printf 'Evidence directory for this repo: `triage-logs/` (untracked)\n' >AGENTS.md
 check "evidence_dir is read from AGENTS.md" eq "$(env -u RALPH_EVIDENCE_DIR bash -c ". '$GATES/common.sh'; evidence_dir")" "triage-logs"
-printf 'RALPH_NO_COMMIT: triage-logs/,gen-otx-*,notes.md\n' >AGENTS.md
+printf 'RALPH_NO_COMMIT: triage-logs/,gen-*,notes.md\n' >AGENTS.md
 nc() { bash -c ". '$GATES/common.sh'; is_no_commit '$1' && echo no || echo yes"; }
 check "RALPH_NO_COMMIT: a directory" eq "$(nc triage-logs/a.log)" no
-check "RALPH_NO_COMMIT: a glob" eq "$(nc gen-otx-123/x)" no
+check "RALPH_NO_COMMIT: a glob" eq "$(nc gen-123/x)" no
 check "RALPH_NO_COMMIT: a file at any depth" eq "$(nc docs/notes.md)" no
 check "default: plans are never committed" eq "$(nc ACTION_PLAN_20260101.md)" no
 check "ordinary source files may be committed" eq "$(nc src/app.py)" yes
-printf 'RALPH_REQUIRE_BRANCH: OTXP-5707\n' >AGENTS.md
+printf 'RALPH_REQUIRE_BRANCH: release-[0-9]+\n' >AGENTS.md
 git checkout -q -B master
 check "branch_ok fails on master when another branch is required" bash -c "! (. '$GATES/common.sh'; branch_ok)"
-git checkout -q -b OTXP-5707
-check "branch_ok passes on the required branch" bash -c ". '$GATES/common.sh'; branch_ok"
+git checkout -q -b release-7
+check "branch_ok passes on a matching branch" bash -c ". '$GATES/common.sh'; branch_ok"
+check "by default the gates add no commit prefix" eq "$(bash -c ". '$GATES/common.sh'; printf '%s' \"\$(commit_prefix)\"")" ""
 
-echo "jira_tag (branch first, AGENTS.md only on main/master)"
-new_repo jira
-jt() { bash -c ". '$GATES/common.sh'; printf '%s' \"\$(jira_tag)\""; }
-printf 'JIRA: LABS-9307\n\nUTF-8 is used.\n' >AGENTS.md
-git checkout -q -B master
-check "master reads the JIRA: line of AGENTS.md" eq "$(jt)" "LABS-9307"
-git checkout -q -b feature/LABS-77-thing
-check "a branch with a ticket wins over AGENTS.md" eq "$(jt)" "LABS-77"
-git checkout -q -b ralph-metrics-test
-check "a branch without a ticket gets NO tag (not the stale AGENTS.md one)" eq "$(jt)" ""
-git checkout -q master
-printf 'UTF-8 first\nJIRA: LABS-5\n' >AGENTS.md
-check "the JIRA: line is preferred over an earlier ticket-looking token" eq "$(jt)" "LABS-5"
-printf 'no ticket labels, see LABS-12 once\n' >AGENTS.md
-check "without a JIRA: line the first ticket-like token is used" eq "$(jt)" "LABS-12"
-git checkout -q --detach
-printf 'JIRA: LABS-9\n' >AGENTS.md
-check "detached HEAD (no branch) falls back to AGENTS.md" eq "$(jt)" "LABS-9"
-
-echo "generic flavor (pytest / cargo test, no audit)"
+echo "language defaults (pytest / cargo test) and the optional audit"
 new_repo gen
-tc() { (RALPH_FLAVOR=generic bash -c ". '$GATES/common.sh'; test_command"); }
-check "no AGENTS.md and no project files: unknown" bash -c '! (cd "$1"; RALPH_FLAVOR=generic bash -c ". \"$2/common.sh\"; test_command")' _ "$PWD" "$GATES"
+tc() { (bash -c ". '$GATES/common.sh'; test_command"); }
+check "no AGENTS.md and no project files: unknown" bash -c '! (cd "$1"; bash -c ". \"$2/common.sh\"; test_command")' _ "$PWD" "$GATES"
 mkdir tests
 eq "$(tc)" "python -m pytest -v"; check "python project defaults to pytest" eq "$(tc)" "python -m pytest -v"
 touch Cargo.toml; rmdir tests
@@ -423,17 +402,17 @@ check "rust project defaults to cargo test" eq "$(tc)" "cargo test"
 printf '# Agents\n- Run tests with: `PYTHONPATH=src python3 -m pytest -q`\n' >AGENTS.md
 check "an explicit pytest command in AGENTS.md wins" eq "$(tc)" "PYTHONPATH=src python3 -m pytest -q"
 printf '# Agents\n## Testing\nUse the magic runner.\n' >AGENTS.md
-check "an unreadable testing section falls back to the agent" bash -c '! (cd "$1"; RALPH_FLAVOR=generic bash -c ". \"$2/common.sh\"; test_command")' _ "$PWD" "$GATES"
+check "an unreadable testing section falls back to the agent" bash -c '! (cd "$1"; bash -c ". \"$2/common.sh\"; test_command")' _ "$PWD" "$GATES"
 new_repo noaudit
 printf '%s' "$PLAN" >ACTION_PLAN.md
-RALPH_AUDIT=0 python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
-check "RALPH_AUDIT=0 creates no audit task" eq "$(bd list --all --json | jq '[.[] | select(.title | startswith("[audit]"))] | length')" 0
-check "RALPH_AUDIT=0 creates 3 epics-less impl tasks (2 epics + 3 impl)" eq "$(bd list --all --json | jq 'length')" 5
+python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
+check "no audit task by default" eq "$(bd list --all --json | jq '[.[] | select(.title | startswith("[audit]"))] | length')" 0
+check "2 epics + 3 impl tasks and nothing else" eq "$(bd list --all --json | jq 'length')" 5
 mv ACTION_PLAN.md ACTION_PLAN_20260101_000000.md
-RALPH_AUDIT=0 bash "$GATES/verify.sh" >/dev/null 2>&1
+bash "$GATES/verify.sh" >/dev/null 2>&1
 check "verify without audit fails while tasks are open (exit 1)" eq "$?" 1
 for _ in 1 2 3 4; do for id in $(bd list --all --json | jq -r '.[] | select((.title | startswith("[impl]")) and .status != "closed") | .id'); do bd close "$id" --reason done >/dev/null 2>&1; done; done
-out=$(RALPH_AUDIT=0 bash "$GATES/verify.sh" 2>&1)
+out=$(bash "$GATES/verify.sh" 2>&1)
 check "verify without audit passes when every deliverable is closed" eq "$?" 0
 check "verify without audit prints PASS" grep -q 'VERIFY_RESULT: PASS' <<<"$out"
 new_repo rust
@@ -442,6 +421,9 @@ printf '#!/bin/bash\necho "cargo $*" >>"$0.log"\nexit 0\n' >"$STUBS/cargo"; chmo
 out=$(bash "$GATES/static-gate.sh" src/main.rs)
 check "rust files run cargo fmt and clippy" grep -q 'PASS cargo clippy' <<<"$out"
 rm -f "$STUBS/cargo" "$STUBS/cargo.log"
+
+# Extension tests (present only where gates/ext.sh exists)
+[ -f "$GATES/tests/ext-tests.sh" ] && . "$GATES/tests/ext-tests.sh"
 
 echo
 echo "$pass passed, $fail failed"

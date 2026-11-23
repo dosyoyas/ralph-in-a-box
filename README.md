@@ -347,7 +347,7 @@ Implementation of the Ralph technique by Geoffrey Huntley:
 ## Deterministic gates (fewer agent runs)
 
 The loop does the mechanical work itself and only wakes the agent when judgement is needed (`gates/`, mounted at
-`/opt/ralph/gates`; disable all with `RALPH_GATES=0`). Same gates for the Python and Rust images (`RALPH_FLAVOR=generic`).
+`/opt/ralph/gates`; disable all with `RALPH_GATES=0`). Same gates for the Python and Rust images.
 
 | Step | Done by | Agent fallback |
 | --- | --- | --- |
@@ -364,12 +364,14 @@ The loop does the mechanical work itself and only wakes the agent when judgement
 - Environment errors in the test output (cargo registry unreachable, Docker down, ...) halt the loop (exit 6).
 - `TEST_GATE_TIMEOUT` (default 3600 s) bounds the test run.
 - Per-run cost/usage is appended to `/tmp/ralph_logs/claude_metrics_<project>.jsonl`; summarise it with `ralph-report.py`.
-- Gate tests: `gates/tests/run-tests.sh` (needs `bd`, `jq`, `git`, `python3`; no Docker). `gates/` is shared verbatim with
-  `ralph_otxb`; keep both copies identical.
+- Gate tests: `gates/tests/run-tests.sh` (needs `bd`, `jq`, `git`, `python3`; no Docker).
+- Extensions: a project family can add `gates/ext.sh` (sourced by `gates/common.sh`) to redefine `default_test_command`
+  and `commit_prefix` or to add environment-error patterns (`ENV_ERROR_EXTRA`), and `gates/tests/ext-tests.sh` for its
+  tests. The core knows nothing about any particular family.
 
 ### Project settings
 
 The gates read optional `KEY: value` lines from the project's `AGENTS.md`: `RALPH_TEST_CMD` (`agent` = the agent runs the
 tests), `RALPH_REQUIRE_BRANCH` (the loop stops with exit 8 on another branch), `RALPH_STATIC_GATE` (`enforce|advisory|off`),
 `RALPH_EVIDENCE_DIR`, `RALPH_NO_COMMIT` (globs the gates never commit) and `RALPH_ENV_ERROR_PATTERN`. Environment variables
-of the same name take precedence. Commits made by the gates carry no ticket prefix in this flavor.
+of the same name take precedence.

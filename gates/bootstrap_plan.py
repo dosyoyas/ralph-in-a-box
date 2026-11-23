@@ -170,7 +170,7 @@ def main():
             for d in feat["deliverables"]:
                 for b in d["blockers"]:
                     bd("dep", "add", ids[d["title"]], ids[b])
-        if os.environ.get("RALPH_AUDIT", "1") == "1":  # loops without an [audit] phase set RALPH_AUDIT=0
+        if os.environ.get("RALPH_AUDIT", "0") == "1":  # only loops with an [audit] phase set RALPH_AUDIT=1
             audit_epic = create("Epic: Acceptance audit", kind="epic", priority=len(features))
             audit = create(
                 "[audit] Acceptance audit of the action plan",

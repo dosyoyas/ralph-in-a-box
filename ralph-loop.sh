@@ -39,9 +39,6 @@ ITERATION_FILE="${LOG_DIR}/${AGENT_PREFIX}_iteration_${PROJECT_NAME}.txt"
 # Deterministic gates (bash/python run by the loop instead of the agent). See gates/.
 # RALPH_GATES=0 disables them all and restores the pure-agent behaviour.
 GATES_DIR="${GATES_DIR:-/opt/ralph/gates}"
-RALPH_FLAVOR="${RALPH_FLAVOR:-generic}" # gates: otxb (otxb_build.py --test) | generic (pytest / cargo test)
-RALPH_AUDIT="${RALPH_AUDIT:-0}"          # this loop has no [audit] phase: bootstrap_plan.py/verify.sh skip it
-export RALPH_FLAVOR RALPH_AUDIT
 GATE_CONTEXT_FILE="${LOG_DIR}/${AGENT_PREFIX}_gate-context_${PROJECT_NAME}.md"
 GATE_ENV_ERROR_FILE="${LOG_DIR}/${AGENT_PREFIX}_gate-env-error_${PROJECT_NAME}.txt"
 export GATE_CONTEXT_FILE GATE_ENV_ERROR_FILE
@@ -302,7 +299,7 @@ METRICS_JQ='
   def cat($u):
     if $u.name == "Bash" then
       ($u.input.command // "") as $c
-      | if   ($c | test("otxb_build|pytest|unittest|cargo (test|nextest)|npm (run )?test")) then "Bash:test"
+      | if   ($c | test("pytest|unittest|cargo (test|nextest)|npm (run )?test")) then "Bash:test"
         elif ($c | test("\\b(sleep|tail -[nf]|wait)\\b"))                                    then "Bash:poll"
         elif ($c | test("(^|[;&| ])bd "))                                                    then "Bash:bd"
         elif ($c | test("(^|[;&| ])git "))                                                   then "Bash:git"
@@ -765,7 +762,7 @@ archive_plan_or_halt() {
 # environment rather than burning iterations on BLOCKED tasks.
 preflight_check() {
     # Check AWS SSO token (only if AWS CLI is available and project uses it)
-    if [ -n "$RALPH_REQUIRE_AWS" ] || command -v otxb_build.py &>/dev/null; then
+    if [ -n "$RALPH_REQUIRE_AWS" ]; then
         if command -v aws &>/dev/null && ! aws sts get-caller-identity &>/dev/null 2>&1; then
             echo ""
             echo "════════════════════════════════════════"
