@@ -414,6 +414,32 @@ run_verify() {
     invoke_agent "$VERIFY_FILE"
 }
 
+# RALPH_REQUIRE_BRANCH (project profile / AGENTS.md): stop before spending anything when the checkout is on another branch.
+# Mirrors the rule "wrong branch: make no commit, record BLOCKED: wrong branch in BLOCKERS.md, end the task".
+check_required_branch() {
+    gates_enabled || return 0
+    # shellcheck source=gates/common.sh
+    . "$GATES_DIR/common.sh"
+    branch_ok && return 0
+    local req branch
+    req=$(ralph_conf RALPH_REQUIRE_BRANCH)
+    branch=$(git branch --show-current 2>/dev/null)
+    {
+        echo ""
+        echo "## BLOCKED: wrong branch"
+        echo "- **Expected branch:** $req"
+        echo "- **Current branch:** ${branch:-<detached HEAD>}"
+        echo "- **What is needed:** switch the checkout to the required branch and re-launch ralph"
+        echo "- **Date:** $(date +%F)"
+    } >>BLOCKERS.md
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "❌ WRONG BRANCH: '${branch:-<detached HEAD>}' is not '$req' (RALPH_REQUIRE_BRANCH)"
+    echo "════════════════════════════════════════"
+    echo "No agent was started and nothing was committed. Recorded in BLOCKERS.md."
+    exit 8
+}
+
 # Decide what the next iteration is before waking the agent.
 #   return 0: the iteration was handled by a gate (no agent needed)
 #   return 1: run the agent with $PROMPT_FILE (DO_TASK + a LOOP CONTEXT section)
@@ -460,7 +486,7 @@ gate_iteration() {
         fi
         echo ""
         echo "WORKING TREE (git status --porcelain, first 40 lines):"
-        git status --porcelain 2>/dev/null | grep -vE '^\?\? (ralph-evidence/|ACTION_PLAN|\.beads)' | head -n 40
+        git status --porcelain 2>/dev/null | grep -vE "^\?\? ($(evidence_dir)/|ACTION_PLAN|\.beads)" | head -n 40
     } >"$GATE_CONTEXT_FILE"
 
     case "$title" in
@@ -486,7 +512,7 @@ gate_iteration() {
     "[review]"*)
         t0=$(date +%s)
         files=$(bd_task_json "$id" | jq -r '.description // ""' | parse_file_list)
-        [ -n "$files" ] || files=$(git status --porcelain | grep -vE '^( D|D )' | sed -E 's/^...//' | grep -vE '^(ralph-evidence/|ACTION_PLAN|\.beads)')
+        [ -n "$files" ] || files=$(git status --porcelain | grep -vE '^( D|D )' | sed -E 's/^...//' | filter_committable)
         # shellcheck disable=SC2086 # one path per word
         out=$(bash "$GATES_DIR/static-gate.sh" $files </dev/null)
         rc=$?
@@ -909,6 +935,7 @@ while true; do
 
     # Re-check environment each iteration (tokens can expire mid-run)
     preflight_check
+    check_required_branch
 
     # Task detection: get counts (fallback to empty if beads not initialized)
     TASK_JSON=$(bd list --json 2>/dev/null || echo "[]")

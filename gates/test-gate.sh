@@ -15,10 +15,12 @@ GATES_DIR=$(cd "$(dirname "$0")" && pwd)
 
 TASK_ID=${1:?usage: test-gate.sh TASK_ID}
 CONTEXT=${GATE_CONTEXT_FILE:-/tmp/ralph-gate-context.md}
-EVID=${RALPH_EVIDENCE_DIR:-ralph-evidence}
+EVID=$(evidence_dir)
 MAX_RETRIES=${MAX_RETRIES:-2}
 TIMEOUT=${TEST_GATE_TIMEOUT:-3600}
-ENV_ERROR_RE='TokenRetrievalError|InvalidGrantException|ExpiredTokenException|Cannot connect to the Docker daemon|Is the docker daemon running|error: failed to (get|fetch|download)|Could not resolve host|Temporary failure in name resolution|otxb_build.py: (command )?not found|exit code 137|Killed$'
+ENV_ERROR_RE='TokenRetrievalError|InvalidGrantException|ExpiredTokenException|Cannot connect to the Docker daemon|Is the docker daemon running|error: failed to (get|fetch|download)|Could not resolve host|Temporary failure in name resolution|otxb_build.py: (command )?not found|exit code 137|Killed$|INFRA ERROR'
+extra_env=$(ralph_conf RALPH_ENV_ERROR_PATTERN || true) # project-specific environment errors (regex)
+[ -n "$extra_env" ] && ENV_ERROR_RE="$ENV_ERROR_RE|$extra_env"
 
 say() { echo "[GATE] $*"; }
 
@@ -70,7 +72,18 @@ epic=$(jq -r '.parent // empty' <<<"$task")
 [ -n "$epic" ] || fallback "task has no parent Epic"
 epic_title=$(bd_task_json "$epic" | jq -r '.title // ""' | sed -E 's/^Epic:[ ]*//')
 
-cmd=$(test_command) || fallback "AGENTS.md defines tests in a way the gate cannot run (add a 'RALPH_TEST_CMD: <command>' line to enable it)"
+branch_ok || fallback "the current branch '$(git branch --show-current)' is not the required one ($(ralph_conf RALPH_REQUIRE_BRANCH)); make NO commit, record 'BLOCKED: wrong branch' in BLOCKERS.md and end the task"
+
+cmd=$(test_command) || fallback "the gate does not know how to run this project's tests (set 'RALPH_TEST_CMD: <command>' in the project profile or AGENTS.md; 'agent' means the agent runs them)"
+[[ "$cmd" != *"{modules}"* ]] || fallback "RALPH_TEST_CMD uses {modules}, which this gate does not support yet"
+if [[ "$cmd" == *"{package}"* ]]; then
+    # one run per package: the first path component of the task's files (monorepo layout)
+    pkgs=$(parse_file_list <<<"$desc" | filter_committable | awk -F/ 'NF > 1 {print $1}' | sort -u)
+    [ -n "$pkgs" ] || fallback "RALPH_TEST_CMD uses {package} but the task's files name no package directory"
+    joined=""
+    for pkg in $pkgs; do joined="${joined:+$joined && }${cmd//\{package\}/$pkg}"; done
+    cmd="$joined"
+fi
 
 integrity=$("$GATES_DIR/test-integrity.sh")
 if [ $? -ne 0 ]; then
@@ -80,12 +93,17 @@ fi
 bd update "$TASK_ID" --claim >/dev/null 2>&1 || fallback "could not claim $TASK_ID"
 
 # --- static gate again: lint that survived [review] must not cost a 10-minute test run ---
-if [ "${RALPH_STATIC_GATE_BEFORE_TESTS:-1}" = "1" ]; then
-    lint_files=$(parse_file_list <<<"$desc" | grep -vE '^(ralph-evidence/|ACTION_PLAN|\.beads)' || true)
+static=$(static_mode)
+if [ "$static" != "off" ] && [ "${RALPH_STATIC_GATE_BEFORE_TESTS:-1}" = "1" ]; then
+    lint_files=$(parse_file_list <<<"$desc" | filter_committable)
     if [ -n "$lint_files" ]; then
         # shellcheck disable=SC2086 # one path per word
         if ! lint_out=$(bash "$GATES_DIR/static-gate.sh" $lint_files); then
-            retry_or_fallback "Static checks failed before running the tests" "$lint_out"
+            if [ "$static" = "advisory" ]; then
+                say "static checks reported findings (RALPH_STATIC_GATE=advisory, not blocking)"
+            else
+                retry_or_fallback "Static checks failed before running the tests" "$lint_out"
+            fi
         fi
     fi
 fi
@@ -136,25 +154,34 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # --- success -> commit + close ---------------------------------------------------
-# Every test function named by a PENDING TEST row of the AC tables must exist (ids come as
-# "path::Class::test_x", "path::test_x, ::test_y", with [params]... so match on the function name).
-all_files=$(parse_file_list <<<"$desc" | grep -vE '^(ralph-evidence/|ACTION_PLAN|\.beads)' || true)
+# Every test named by a PENDING TEST row of the AC tables must exist. Ids come in many shapes
+# ("path::Class::test_x", "path::test_x, ::test_y", "pkg.mod.TestX.test_y", "pkg.mod.test_mod" for a whole module,
+# "test_x[param]"), so look at the last segment: a module name is checked as a file, anything else as `def name`.
+all_files=$(parse_file_list <<<"$desc" | filter_committable)
 unproven=""
-while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    # shellcheck disable=SC2086 # one path per word
-    if ! git grep -qE "def $name\b" -- '*.py' 2>/dev/null && ! { [ -n "$all_files" ] && grep -qsE "def $name\b" $all_files; }; then
-        unproven="$unproven $name"
+while IFS= read -r tok; do
+    tok=${tok%%\[*}
+    last=${tok##*[.:]}
+    case "$last" in test_*) ;; *) continue ;; esac
+    if [[ "$tok" != *::* && "$tok" == *.* ]] \
+        && [ -n "$(git ls-files -co --exclude-standard -- "*/$last.py" "$last.py" 2>/dev/null | head -n 1)" ]; then
+        continue # a dotted module id, e.g. otxapi.noc.tests.test_queries
     fi
-done < <(grep -E '^AC[0-9]+ \| PENDING \| TEST:' <<<"$desc" | sed -E 's/.*TEST://; s/ — .*//; s#[A-Za-z0-9_./-]+\.py##g' | grep -oE '[A-Za-z_][A-Za-z0-9_]*' | grep -E '^test_' | sort -u)
+    # shellcheck disable=SC2086 # one path per word
+    if ! git grep -qE "def $last\b" -- '*.py' 2>/dev/null && ! { [ -n "$all_files" ] && grep -qsE "def $last\b" $all_files; }; then
+        unproven="$unproven $last"
+    fi
+done < <(grep -E '^AC[0-9]+ \| PENDING \| TEST:' <<<"$desc" | sed -E 's/.*TEST://; s/ — .*//' | tr -s ', ' '\n\n' | sed '/^$/d')
 [ -z "$unproven" ] || fallback "tests passed (exit 0, evidence $evidence) but these PENDING test functions were not found in the repo:$unproven. DO NOT re-run the tests; update the AC table, then commit." ""
 
-files=$(parse_file_list <<<"$desc" | grep -vE '^(ralph-evidence/|ACTION_PLAN|\.beads)' || true)
+files=$(parse_file_list <<<"$desc" | filter_committable)
+skipped=$(parse_file_list <<<"$desc" | while IFS= read -r f; do is_no_commit "$f" && echo "$f"; done)
+[ -z "$skipped" ] || say "never committed (evidence / plans / RALPH_NO_COMMIT): $(echo $skipped)"
 [ -n "$files" ] || fallback "tests passed (exit 0, evidence $evidence) but the [test] description lists no FILES to commit. DO NOT re-run the tests."
 staged=()
 while IFS= read -r f; do
     if [ -e "$f" ] || git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
-        git add -A -- "$f" && staged+=("$f")
+        git add -- "$f" && staged+=("$f")
     fi
 done <<<"$files"
 if git diff --cached --quiet; then

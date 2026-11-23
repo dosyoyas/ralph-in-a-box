@@ -366,3 +366,10 @@ The loop does the mechanical work itself and only wakes the agent when judgement
 - Per-run cost/usage is appended to `/tmp/ralph_logs/claude_metrics_<project>.jsonl`; summarise it with `ralph-report.py`.
 - Gate tests: `gates/tests/run-tests.sh` (needs `bd`, `jq`, `git`, `python3`; no Docker). `gates/` is shared verbatim with
   `ralph_otxb`; keep both copies identical.
+
+### Project settings
+
+The gates read optional `KEY: value` lines from the project's `AGENTS.md`: `RALPH_TEST_CMD` (`agent` = the agent runs the
+tests), `RALPH_REQUIRE_BRANCH` (the loop stops with exit 8 on another branch), `RALPH_STATIC_GATE` (`enforce|advisory|off`),
+`RALPH_EVIDENCE_DIR`, `RALPH_NO_COMMIT` (globs the gates never commit) and `RALPH_ENV_ERROR_PATTERN`. Environment variables
+of the same name take precedence. Commits made by the gates carry no ticket prefix in this flavor.

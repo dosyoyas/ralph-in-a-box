@@ -221,6 +221,69 @@ check "the tests were not run" test ! -e "$TMP/tests-ran"
 check "an [impl] RETRY carries the lint output" grep -q 'F401 unused' <(bd list --all --json | jq -r '.[] | select(.title | startswith("[impl] RETRY")) | .description')
 printf '#!/bin/bash\nexit 0\n' >"$STUBS/ruff"
 
+setup_test_task gate_pkg
+mkdir -p pkg-a pkg-b && echo 'def test_a(): pass' >pkg-a/test_a.py && echo 'def test_b(): pass' >pkg-b/test_b.py
+bd update "$TID" --description "FILES:
+- pkg-a/test_a.py
+- pkg-b/test_b.py
+
+RETRY: 0" >/dev/null 2>&1
+RALPH_TEST_CMD="echo run {package} >>$TMP/pkg-runs" bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "{package} runs the command once per package (exit 0)" eq "$?" 0
+check "both packages were run" eq "$(sort "$TMP/pkg-runs" | tr '\n' ' ')" "run pkg-a run pkg-b "
+rm -f "$TMP/pkg-runs"
+setup_test_task gate_nocommit
+mkdir -p triage-logs && echo log >triage-logs/run.log && echo 'def test_a(): pass' >tests/test_a.py
+bd update "$TID" --description "FILES:
+- tests/test_a.py
+- triage-logs/run.log
+
+RETRY: 0" >/dev/null 2>&1
+printf 'RALPH_NO_COMMIT: triage-logs/\n' >AGENTS.md
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "files under RALPH_NO_COMMIT are not committed" eq "$(git show --name-only --format= HEAD | tr '\n' ' ')" "tests/test_a.py "
+setup_test_task gate_delete
+mkdir -p src && echo 'x = 1' >src/old.py && git add -A && git commit -q -m old && rm src/old.py
+bd update "$TID" --description "FILES:
+- src/old.py
+
+RETRY: 0" >/dev/null 2>&1
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "a deleted file is committed without git add -A" eq "$(git show --name-status --format= HEAD | tr '\t' ' ')" "D src/old.py"
+setup_test_task gate_dotted
+printf 'class TestQ:\n    def test_hours(self): pass\n' >tests/test_queries.py
+bd update "$TID" --description "FILES:
+- tests/test_queries.py
+
+AC TABLE:
+AC1 | PENDING | TEST: otxapi.noc.tests.test_queries.TestQ.test_hours — to run in [test]
+AC2 | PENDING | TEST: otxapi.noc.tests.test_queries — to run in [test]
+
+RETRY: 0" >/dev/null 2>&1
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+rc_dotted=$?
+check "dotted unittest ids (function and whole module) are accepted" eq "$rc_dotted" 0
+[ "$rc_dotted" -eq 0 ] || sed 's/^/       /' "$TMP/out.txt" | tail -5
+setup_test_task gate_infra
+RALPH_TEST_CMD='echo "INFRA ERROR: pip install of test requirements failed"; exit 3' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "INFRA ERROR is an environment error (exit 20)" eq "$?" 20
+setup_test_task gate_advisory
+echo 'x = 1' >tests/test_b.py
+bd update "$TID" --description "FILES:
+- tests/test_b.py
+
+RETRY: 0" >/dev/null 2>&1
+printf '#!/bin/bash\necho "F401"\nexit 1\n' >"$STUBS/ruff"
+RALPH_STATIC_GATE=advisory RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "RALPH_STATIC_GATE=advisory does not block (exit 0, committed)" eq "$(git log --oneline | wc -l | tr -d ' ')" 2
+printf '#!/bin/bash\nexit 0\n' >"$STUBS/ruff"
+setup_test_task gate_branch
+printf 'RALPH_REQUIRE_BRANCH: OTXP-5707\n' >AGENTS.md
+: >"$GATE_CONTEXT_FILE"
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "a wrong branch hands the task back to the agent (exit 10)" eq "$?" 10
+check "and nothing is committed" eq "$(git log --oneline | wc -l | tr -d ' ')" 1
+
 setup_test_task gate_maxretry 2
 : >"$GATE_CONTEXT_FILE"
 RALPH_TEST_CMD='echo boom; exit 1' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
@@ -295,6 +358,59 @@ bd close "$AUDIT" --reason "AC1 | MET | x" >/dev/null 2>&1
 mk "[impl] GAP: leftover" --type task --priority 0 --description x >/dev/null
 bash "$GATES/verify.sh" >/dev/null 2>&1
 check "an open GAP task fails (exit 1)" eq "$?" 1
+
+echo "project settings (env > profile > AGENTS.md) and the otxb test command guard"
+new_repo conf
+otx() { (cd "$PWD" && bash -c ". '$GATES/common.sh'; test_command") 2>/dev/null; }
+check "no AGENTS.md: otxb default" eq "$(otx)" "otxb_build.py --test"
+printf '# Agents\nBe concise.\n' >AGENTS.md
+check "AGENTS.md silent about tests: otxb default" eq "$(otx)" "otxb_build.py --test"
+printf '# Agents\nRun `otxb_build.py --test` from the repo root.\n' >AGENTS.md
+check "AGENTS.md recommending it: otxb default" eq "$(otx)" "otxb_build.py --test"
+printf '**Do NOT use `otxb_build.py`** (not `otxb_build.py --test`, not any other subcommand).\n' >AGENTS.md
+check "AGENTS.md forbidding it: the agent runs the tests" eq "$(otx)" ""
+printf 'JIRA: LABS-1\n\n\\_\\*\\* TESTING: use ./build.sh otxb-core-aws to run the tests for otxb-core-aws\n' >AGENTS.md
+check "AGENTS.md documenting another procedure: the agent runs the tests" eq "$(otx)" ""
+printf '# Agents\nRALPH_TEST_CMD: make check\n' >AGENTS.md
+check "RALPH_TEST_CMD line in AGENTS.md" eq "$(otx)" "make check"
+printf 'RALPH_TEST_CMD: ./build.sh {package}\n' >"$TMP/profile.conf"
+check "a profile wins over AGENTS.md" eq "$(RALPH_PROFILE_FILE="$TMP/profile.conf" otx)" "./build.sh {package}"
+check "the environment wins over the profile" eq "$(RALPH_TEST_CMD='env cmd' RALPH_PROFILE_FILE="$TMP/profile.conf" otx)" "env cmd"
+printf 'RALPH_TEST_CMD: agent\n' >"$TMP/profile.conf"
+check "RALPH_TEST_CMD: agent hands the tests to the agent" eq "$(RALPH_PROFILE_FILE="$TMP/profile.conf" otx)" ""
+printf 'Evidence directory for this repo: `triage-logs/` (untracked)\n' >AGENTS.md
+check "evidence_dir is read from AGENTS.md" eq "$(env -u RALPH_EVIDENCE_DIR bash -c ". '$GATES/common.sh'; evidence_dir")" "triage-logs"
+printf 'RALPH_NO_COMMIT: triage-logs/,gen-otx-*,notes.md\n' >AGENTS.md
+nc() { bash -c ". '$GATES/common.sh'; is_no_commit '$1' && echo no || echo yes"; }
+check "RALPH_NO_COMMIT: a directory" eq "$(nc triage-logs/a.log)" no
+check "RALPH_NO_COMMIT: a glob" eq "$(nc gen-otx-123/x)" no
+check "RALPH_NO_COMMIT: a file at any depth" eq "$(nc docs/notes.md)" no
+check "default: plans are never committed" eq "$(nc ACTION_PLAN_20260101.md)" no
+check "ordinary source files may be committed" eq "$(nc src/app.py)" yes
+printf 'RALPH_REQUIRE_BRANCH: OTXP-5707\n' >AGENTS.md
+git checkout -q -B master
+check "branch_ok fails on master when another branch is required" bash -c "! (. '$GATES/common.sh'; branch_ok)"
+git checkout -q -b OTXP-5707
+check "branch_ok passes on the required branch" bash -c ". '$GATES/common.sh'; branch_ok"
+
+echo "jira_tag (branch first, AGENTS.md only on main/master)"
+new_repo jira
+jt() { bash -c ". '$GATES/common.sh'; printf '%s' \"\$(jira_tag)\""; }
+printf 'JIRA: LABS-9307\n\nUTF-8 is used.\n' >AGENTS.md
+git checkout -q -B master
+check "master reads the JIRA: line of AGENTS.md" eq "$(jt)" "LABS-9307"
+git checkout -q -b feature/LABS-77-thing
+check "a branch with a ticket wins over AGENTS.md" eq "$(jt)" "LABS-77"
+git checkout -q -b ralph-metrics-test
+check "a branch without a ticket gets NO tag (not the stale AGENTS.md one)" eq "$(jt)" ""
+git checkout -q master
+printf 'UTF-8 first\nJIRA: LABS-5\n' >AGENTS.md
+check "the JIRA: line is preferred over an earlier ticket-looking token" eq "$(jt)" "LABS-5"
+printf 'no ticket labels, see LABS-12 once\n' >AGENTS.md
+check "without a JIRA: line the first ticket-like token is used" eq "$(jt)" "LABS-12"
+git checkout -q --detach
+printf 'JIRA: LABS-9\n' >AGENTS.md
+check "detached HEAD (no branch) falls back to AGENTS.md" eq "$(jt)" "LABS-9"
 
 echo "generic flavor (pytest / cargo test, no audit)"
 new_repo gen
