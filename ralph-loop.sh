@@ -36,6 +36,15 @@ AGENT_PREFIX="${RALPH_AGENT}"
 LOG_FILE="${LOG_DIR}/${AGENT_PREFIX}_live_${PROJECT_NAME}.log"
 COST_FILE="${LOG_DIR}/${AGENT_PREFIX}_cost_${PROJECT_NAME}.txt"
 ITERATION_FILE="${LOG_DIR}/${AGENT_PREFIX}_iteration_${PROJECT_NAME}.txt"
+# Deterministic gates (bash/python run by the loop instead of the agent). See gates/.
+# RALPH_GATES=0 disables them all and restores the pure-agent behaviour.
+GATES_DIR="${GATES_DIR:-/opt/ralph/gates}"
+GATE_CONTEXT_FILE="${LOG_DIR}/${AGENT_PREFIX}_gate-context_${PROJECT_NAME}.md"
+GATE_ENV_ERROR_FILE="${LOG_DIR}/${AGENT_PREFIX}_gate-env-error_${PROJECT_NAME}.txt"
+export GATE_CONTEXT_FILE GATE_ENV_ERROR_FILE
+# Per-invocation cost/usage metrics (one JSON line per agent run). Append-only:
+# unlike LOG_FILE it survives iterations. Summarise with ralph-report.py.
+METRICS_FILE="${LOG_DIR}/${AGENT_PREFIX}_metrics_${PROJECT_NAME}.jsonl"
 # Persists the count of consecutive no-progress iterations across the loop's
 # context resets (each iteration is a fresh agent invocation).
 NO_PROGRESS_FILE="${LOG_DIR}/${AGENT_PREFIX}_noprogress_${PROJECT_NAME}.txt"
@@ -282,12 +291,279 @@ start_watchdog() {
     done
 }
 
+# jq program: reduce one agent run's stream-json events to a single metrics object.
+# Answers "where do the tokens go": per-turn context size, cost, and bytes of tool
+# output fed back into the context, grouped by tool category.
+METRICS_JQ='
+  def txt: if type=="array" then (map(.text? // "") | join("")) else (. // "" | tostring) end;
+  def cat($u):
+    if $u.name == "Bash" then
+      ($u.input.command // "") as $c
+      | if   ($c | test("pytest|unittest|cargo (test|nextest)|npm (run )?test")) then "Bash:test"
+        elif ($c | test("\\b(sleep|tail -[nf]|wait)\\b"))                                    then "Bash:poll"
+        elif ($c | test("(^|[;&| ])bd "))                                                    then "Bash:bd"
+        elif ($c | test("(^|[;&| ])git "))                                                   then "Bash:git"
+        elif ($c | test("ruff|pyrefly|gitleaks|clippy|biome|cargo (fmt|check)"))             then "Bash:lint"
+        else "Bash:other" end
+    elif $u.name == "Read" and (($u.input.file_path // "") | test("/specs/|/\\.claude/")) then "Read:spec"
+    else $u.name end;
+  . as $ev
+  | [ $ev[] | select(.type=="assistant") ] as $asst
+  | ([ $ev[] | select(.type=="result") ] | .[-1] // {}) as $res
+  | ( [ $asst[] | select(.message.usage != null) ] | group_by(.message.id) | map(.[-1].message.usage) ) as $turns
+  | ( [ $asst[].message.content[]? | select(.type=="tool_use") ] ) as $uses
+  | ( [ $ev[] | select(.type=="user") | .message.content[]? | select(type=="object" and .type=="tool_result")
+        | { key: .tool_use_id, value: ((.content | txt) | length) } ] | from_entries ) as $bytes
+  | ( [ $uses[] | { c: cat(.), b: ($bytes[.id] // 0) } ]
+      | group_by(.c)
+      | map({ key: .[0].c, value: { n: length, result_bytes: (map(.b) | add) } }) | from_entries ) as $tools
+  | ( [ $turns[] | ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) ] ) as $ctx
+  | {
+      cost_usd:  ($res.total_cost_usd // 0),
+      num_turns: ($res.num_turns // ($turns | length)),
+      api_ms:    ($res.duration_api_ms // 0),
+      is_error:  ($res.is_error // false),
+      tokens: {
+        input:          ([$turns[].input_tokens // 0] | add // 0),
+        cache_read:     ([$turns[].cache_read_input_tokens // 0] | add // 0),
+        cache_creation: ([$turns[].cache_creation_input_tokens // 0] | add // 0),
+        output:         ([$turns[].output_tokens // 0] | add // 0)
+      },
+      first_turn_ctx: ($ctx[0] // 0),
+      max_ctx:        ($ctx | max // 0),
+      tools: $tools,
+      claimed: ( [ $uses[] | select(.name=="Bash") | (.input.command // "")
+                   | (capture("bd update (?<id>[^ ]+) --claim") | .id)? ] | .[0] // null )
+    }'
+
+# Append one metrics line for the agent run that just finished.
+# $1 prompt file  $2 first LOG_FILE line of this run  $3 exit code  $4 wall seconds
+record_metrics() {
+    [ "$RALPH_AGENT" = "claude" ] || return 0
+    local prompt_file="$1" start_line="$2" rc="$3" wall="$4" kind m claimed title=""
+    case "$(basename "$prompt_file")" in
+    BOOTSTRAP*) kind="bootstrap" ;;
+    VERIFY*) kind="verify" ;;
+    *) kind="task" ;;
+    esac
+    m=$(tail -n +"$((start_line + 1))" "$LOG_FILE" | jq -c -R 'fromjson? // empty' 2>/dev/null | jq -s -c "$METRICS_JQ" 2>/dev/null) || return 0
+    [ -n "$m" ] || return 0
+    claimed=$(echo "$m" | jq -r '.claimed // empty')
+    # The loop claims the task itself now (RALPH_RUN_TASK); the agent no longer runs `bd update --claim`.
+    [ -n "${RALPH_RUN_TASK:-}" ] && claimed="$RALPH_RUN_TASK"
+    [ -n "$claimed" ] && title=$(bd show "$claimed" --json 2>/dev/null | jq -r 'if type=="array" then .[0] else . end | .title // empty' 2>/dev/null)
+    local phase="$kind"
+    if [ "$kind" = "task" ]; then
+        phase=$(echo "$title" | sed -nE 's/^\[([a-z]+)\].*/\1/p')
+        [ -z "$phase" ] && phase="task-unknown"
+    fi
+    echo "$m" | jq -c --argjson it "$ITERATION" --arg kind "$kind" --arg phase "$phase" \
+        --arg task "$claimed" --arg title "$title" --argjson rc "$rc" --argjson wall "$wall" \
+        --arg ts "$(date -u +%FT%TZ)" --arg model "${ANTHROPIC_MODEL:-default}" \
+        '. + {ts:$ts, iteration:$it, kind:$kind, phase:$phase, task:$task, title:$title, exit_code:$rc, wall_s:$wall, model:$model}' \
+        >>"$METRICS_FILE" 2>/dev/null || true
+}
+
+gates_enabled() { [ "${RALPH_GATES:-1}" = "1" ] && [ -d "$GATES_DIR" ]; }
+
+# One metrics line for work done by a gate (no agent, no tokens): $1 phase $2 task $3 wall seconds
+record_gate_metrics() {
+    [ "$RALPH_AGENT" = "claude" ] || return 0
+    jq -n -c --argjson it "$ITERATION" --arg phase "$1" --arg task "$2" --argjson wall "$3" --arg ts "$(date -u +%FT%TZ)" \
+        '{ts:$ts, iteration:$it, kind:"gate", phase:$phase, task:$task, title:"", exit_code:0, wall_s:$wall, model:"bash",
+          cost_usd:0, num_turns:0, api_ms:0, is_error:false,
+          tokens:{input:0,cache_read:0,cache_creation:0,output:0}, first_turn_ctx:0, max_ctx:0, tools:{}}' \
+        >>"$METRICS_FILE" 2>/dev/null || true
+}
+
+# Bootstrap ACTION_PLAN.md into beads: the script first, the agent only if the plan
+# cannot be parsed with certainty (nothing was created in that case).
+run_bootstrap() {
+    if gates_enabled && [ -f "$GATES_DIR/bootstrap_plan.py" ]; then
+        local t0 rc
+        t0=$(date +%s)
+        # shellcheck source=gates/common.sh
+        . "$GATES_DIR/common.sh"
+        RALPH_FEATURE_TAG_RE=$(ralph_conf RALPH_FEATURE_TAG_RE 2>/dev/null) python3 "$GATES_DIR/bootstrap_plan.py" ACTION_PLAN.md </dev/null
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+            record_gate_metrics bootstrap-script "" "$(( $(date +%s) - t0 ))"
+            return 0
+        fi
+        [ "$rc" -eq 3 ] && return 3
+        echo "↩️  bootstrap script could not handle the plan (exit $rc) — falling back to the BOOTSTRAP agent"
+    fi
+    invoke_agent "$BOOTSTRAP_FILE"
+}
+
+# Final report: deterministic when the [audit] task already judged the plan, else the VERIFY agent.
+# Prints the report; returns 0 PASS / 1 FAIL like the agent would.
+run_verify() {
+    if gates_enabled && [ -f "$GATES_DIR/verify.sh" ]; then
+        local t0 rc
+        t0=$(date +%s)
+        bash "$GATES_DIR/verify.sh" </dev/null
+        rc=$?
+        if [ "$rc" -le 1 ]; then
+            record_gate_metrics verify-script "" "$(( $(date +%s) - t0 ))"
+            return "$rc"
+        fi
+        echo "↩️  verify script cannot judge this plan state (exit $rc) — falling back to the VERIFY agent"
+    fi
+    invoke_agent "$VERIFY_FILE"
+}
+
+# RALPH_REQUIRE_BRANCH (project profile / AGENTS.md): stop before spending anything when the checkout is on another branch.
+# Mirrors the rule "wrong branch: make no commit, record BLOCKED: wrong branch in BLOCKERS.md, end the task".
+check_required_branch() {
+    gates_enabled || return 0
+    # shellcheck source=gates/common.sh
+    . "$GATES_DIR/common.sh"
+    branch_ok && return 0
+    local req branch
+    req=$(ralph_conf RALPH_REQUIRE_BRANCH)
+    branch=$(git branch --show-current 2>/dev/null)
+    {
+        echo ""
+        echo "## BLOCKED: wrong branch"
+        echo "- **Expected branch:** $req"
+        echo "- **Current branch:** ${branch:-<detached HEAD>}"
+        echo "- **What is needed:** switch the checkout to the required branch and re-launch ralph"
+        echo "- **Date:** $(date +%F)"
+    } >>BLOCKERS.md
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "❌ WRONG BRANCH: '${branch:-<detached HEAD>}' is not '$req' (RALPH_REQUIRE_BRANCH)"
+    echo "════════════════════════════════════════"
+    echo "No agent was started and nothing was committed. Recorded in BLOCKERS.md."
+    exit 8
+}
+
+# An Epic whose last closed task is an [impl] and has nothing open is stuck (no [review] will ever follow): create it.
+# Runs before the loop counts open work, otherwise such an Epic looks "done" and its work is never committed.
+sweep_epics() {
+    gates_enabled || return 0
+    bash "$GATES_DIR/epic-sweep.sh" </dev/null
+}
+
+# Decide what the next iteration is before waking the agent.
+#   return 0: the iteration was handled by a gate (no agent needed)
+#   return 1: run the agent with $PROMPT_FILE (DO_TASK + a LOOP CONTEXT section)
+gate_iteration() {
+    PROMPT_FILE="$DO_TASK_FILE"
+    gates_enabled || return 1
+    # shellcheck source=gates/common.sh
+    . "$GATES_DIR/common.sh"
+    local next id title t0 rc files out
+    RALPH_RUN_TASK="" # set below once a task is assigned; read by record_metrics
+    next=$(bash "$GATES_DIR/next-task.sh" </dev/null) || return 1
+    id=$(jq -r .id <<<"$next")
+    title=$(jq -r .title <<<"$next")
+    local phase claimed=0 parent
+    phase=$(sed -nE 's/^\[([a-z]+)\].*/\1/p' <<<"$title")
+    parent=$(jq -r '.parent // empty' <<<"$next")
+    # The loop claims the task and hands over what the agent would otherwise fetch with
+    # `bd show` / `bd list` (several turns and tens of KiB of tool output per run).
+    RALPH_RUN_TASK="$id"
+    if [ "$phase" != "test" ] && bd update "$id" --claim </dev/null >/dev/null 2>&1; then claimed=1; fi
+    {
+        echo "ASSIGNED TASK: $id — $title"
+        if [ "$claimed" = 1 ]; then
+            echo "The loop already found AND CLAIMED this task. Do NOT run \`bd ready\`, \`bd prime\`, \`bd show $id\` or \`bd list\` to"
+            echo "orient yourself and do not claim it again: Phases 1-2 are done and their result is below. Start at Phase 3."
+        else
+            echo "The loop chose this task: claim exactly this one (\`bd update $id --claim\`) and skip \`bd ready\` discovery."
+        fi
+        echo ""
+        echo "TASK (from beads, verbatim):"
+        bd_task_json "$id" | jq -r '"status: \(.status)\nparent: \(.parent // "-")\n\n\(.description // "")" + (if .notes then "\n\nNOTES:\n\(.notes)" else "" end)'
+        if [ -n "$parent" ] && [ -n "$(epic_tag "$parent")" ]; then
+            echo ""
+            echo "COMMIT TAG for this Epic (named by its Feature in the plan; use it as the commit prefix): $(epic_tag "$parent")"
+        fi
+        if [ -n "$parent" ]; then
+            echo ""
+            echo "EPIC VIEW (siblings; [status] id title :: close reason[0:80]):"
+            bd list --all --json 2>/dev/null | jq -r --arg e "$parent" \
+                '[.[] | select(.parent == $e)] | sort_by(.priority)[] | "[\(.status)] \(.id) \(.title) :: \((.close_reason // "-")[0:80])"'
+        fi
+        if [ "$phase" = "review" ] && [ -n "$parent" ]; then
+            echo ""
+            echo "CLOSED [impl] TASKS OF THIS EPIC (plan text, acceptance criteria, AC tables and FILES MODIFIED notes):"
+            bd list --all --json 2>/dev/null | jq -r --arg e "$parent" \
+                '[.[] | select(.parent == $e and .status == "closed" and (.title | startswith("[impl]")))][]
+                 | "--- \(.id) \(.title)\n\(.description // "")\nNOTES:\n\(.notes // "-")\n"'
+        fi
+        echo ""
+        echo "WORKING TREE (git status --porcelain, first 40 lines):"
+        git status --porcelain 2>/dev/null | grep -vE "^\?\? ($(evidence_dir)/|ACTION_PLAN|\.beads)" | head -n 40
+    } >"$GATE_CONTEXT_FILE"
+
+    case "$title" in
+    "[test]"*)
+        t0=$(date +%s)
+        bash "$GATES_DIR/test-gate.sh" "$id" </dev/null
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+            record_gate_metrics test-gate "$id" "$(( $(date +%s) - t0 ))"
+            label_run_issues
+            return 0
+        elif [ "$rc" -eq 20 ]; then
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "❌ ENVIRONMENT ERROR: the test gate hit an unrecoverable environment problem"
+            echo "════════════════════════════════════════"
+            echo "  $(cat "$GATE_ENV_ERROR_FILE" 2>/dev/null)"
+            echo "Fix: resolve the issue above, then re-launch ralph."
+            exit 6
+        fi
+        record_gate_metrics test-gate-fallback "$id" "$(( $(date +%s) - t0 ))"
+        ;;
+    "[review]"*)
+        t0=$(date +%s)
+        files=$(bd_task_json "$id" | jq -r '.description // ""' | parse_file_list)
+        [ -n "$files" ] || files=$(git status --porcelain | grep -vE '^( D|D )' | sed -E 's/^...//' | filter_committable)
+        # shellcheck disable=SC2086 # one path per word
+        out=$(bash "$GATES_DIR/static-gate.sh" $files </dev/null)
+        rc=$?
+        {
+            echo ""
+            echo "STATIC GATE (ruff/pyrefly/biome/gitleaks, already run by the loop on the changed files):"
+            printf '%s\n' "$out"
+            if [ "$rc" -eq 0 ]; then
+                echo "-> PASS. Do NOT re-run these linters or gitleaks (the lint step of [review] is done); do the rest of the phase."
+            else
+                echo "-> FAIL. Fix only the failures above, on changed lines, then re-run just the failing check."
+            fi
+            echo ""
+            echo "TEST-INTEGRITY GATE (diff of test files against HEAD):"
+            # shellcheck disable=SC2086 # one path per word
+            bash "$GATES_DIR/test-integrity.sh" $files </dev/null
+        } >>"$GATE_CONTEXT_FILE"
+        record_gate_metrics review-prechecks "$id" "$(( $(date +%s) - t0 ))"
+        ;;
+    esac
+
+    PROMPT_FILE=$(mktemp /tmp/ralph-prompt-XXXXXX)
+    {
+        bash "$GATES_DIR/build-prompt.sh" "$phase" "$DO_TASK_FILE"
+        echo ""
+        echo "---"
+        echo "# LOOP CONTEXT (authoritative — computed by the loop before this run; overrides the workflow above where they differ)"
+        cat "$GATE_CONTEXT_FILE"
+    } >"$PROMPT_FILE"
+    return 1
+}
+
 # Invoke the selected agent with a prompt file
 # Agent runs in background; watchdog kills it if no output for AGENT_TIMEOUT seconds.
 # Exit code is captured from the agent process (not parse_stream).
 invoke_agent() {
     local prompt_file="$1"
     local rc_file=$(mktemp /tmp/ralph-rc-XXXXXX)
+    local metrics_start_line metrics_t0
+    metrics_start_line=$(wc -l <"$LOG_FILE" 2>/dev/null | tr -d ' ')
+    metrics_t0=$(date +%s)
     date +%s >"$HEARTBEAT_FILE"
     # Clear any usage-limit / env-error / malformed-tool-call flag from a
     # previous invocation.
@@ -368,6 +644,10 @@ invoke_agent() {
     case "$rc" in
     ''|*[!0-9]*) rc=124 ;;
     esac
+    record_metrics "$prompt_file" "${metrics_start_line:-0}" "$rc" "$(( $(date +%s) - metrics_t0 ))"
+    # parse_stream runs in its own process and keeps the running total in COST_FILE: reload it so the
+    # summary lines (and MAX_COST) include this run — the last run (VERIFY) is never reloaded otherwise.
+    [ -f "$COST_FILE" ] && TOTAL_COST=$(cat "$COST_FILE" 2>/dev/null || echo "$TOTAL_COST")
 
     # If the agent reported an account usage/quota limit, halt the whole loop.
     # Retrying only burns more attempts against an exhausted account; the user
@@ -434,7 +714,7 @@ protect_after() {
     fi
 }
 
-# JIRA ticket every beads issue of this run is labelled with, for traceability
+# Ticket key every beads issue of this run is labelled with, for traceability
 # (`bd list -l <TICKET>`). The beads prefix names the repo, so it cannot carry the
 # ticket. Taken from the branch (its leading ticket, else the whole name); only on
 # main/master, where the branch says nothing, from AGENTS.md. Empty = no label.
@@ -496,7 +776,7 @@ archive_plan_or_halt() {
 # environment rather than burning iterations on BLOCKED tasks.
 preflight_check() {
     # Check AWS SSO token (only if AWS CLI is available and project uses it)
-    if [ -n "$RALPH_REQUIRE_AWS" ] || command -v otxb_build.py &>/dev/null; then
+    if [ -n "$RALPH_REQUIRE_AWS" ]; then
         if command -v aws &>/dev/null && ! aws sts get-caller-identity &>/dev/null 2>&1; then
             echo ""
             echo "════════════════════════════════════════"
@@ -666,6 +946,8 @@ while true; do
 
     # Re-check environment each iteration (tokens can expire mid-run)
     preflight_check
+    check_required_branch
+    sweep_epics
 
     # Task detection: get counts (fallback to empty if beads not initialized)
     TASK_JSON=$(bd list --json 2>/dev/null || echo "[]")
@@ -688,7 +970,7 @@ while true; do
             echo "=== Bootstrap $(date) ===" >>"$LOG_FILE"
 
             protect_before
-            invoke_agent "$BOOTSTRAP_FILE"
+            run_bootstrap
             AGENT_EXIT_CODE=$?
             protect_after
             label_run_issues
@@ -718,7 +1000,7 @@ while true; do
             echo "=== Bootstrap $(date) ===" >>"$LOG_FILE"
 
             protect_before
-            invoke_agent "$BOOTSTRAP_FILE"
+            run_bootstrap
             AGENT_EXIT_CODE=$?
             protect_after
             label_run_issues
@@ -767,7 +1049,7 @@ while true; do
             echo "=== Verify $(date) ===" >>"$LOG_FILE"
 
             protect_before
-            invoke_agent "$VERIFY_FILE"
+            run_verify
             VERIFY_EXIT=$?
             protect_after
             label_run_issues
@@ -865,9 +1147,17 @@ while true; do
 
     PROGRESS_BEFORE=$(progress_signature)
 
+    if gate_iteration; then
+        # Handled by a gate: no agent run this iteration.
+        echo "0" >"$NO_PROGRESS_FILE"
+        sleep $CHECK_INTERVAL
+        continue
+    fi
+
     protect_before
-    invoke_agent "$DO_TASK_FILE"
+    invoke_agent "$PROMPT_FILE"
     AGENT_EXIT_CODE=$?
+    [ "$PROMPT_FILE" != "$DO_TASK_FILE" ] && rm -f "$PROMPT_FILE"
     protect_after
     label_run_issues
 

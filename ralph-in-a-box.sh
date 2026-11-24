@@ -199,6 +199,13 @@ if [ -n "$RALPH_SSH_CONFIG" ]; then
     fi
 fi
 
+# Gate settings given in the environment (typically by a project's ralph_*.sh wrapper) win over the profile and AGENTS.md:
+# forward them to the container.
+for _k in RALPH_GATES TEST_GATE_TIMEOUT RALPH_TEST_CMD RALPH_TEST_ROOT RALPH_TEST_FAIL_PATTERN RALPH_REQUIRE_BRANCH \
+    RALPH_STATIC_GATE RALPH_EVIDENCE_DIR RALPH_NO_COMMIT RALPH_ENV_ERROR_PATTERN RALPH_FEATURE_TAG_RE; do
+    [ -n "${!_k}" ] && RALPH_AUTH_ARGS+=(-e "$_k=${!_k}")
+done
+
 echo "=== Ralph Container Launch ==="
 echo "Agent:      $RALPH_AGENT"
 echo "Workspace:  $WORKSPACE"
@@ -248,6 +255,7 @@ docker run $DOCKER_TTY_FLAGS --rm \
     \
     `# Script and task definition - read-only` \
     -v "$RALPH_DIR/ralph-loop.sh:/opt/ralph/ralph-loop.sh:ro" \
+    -v "$RALPH_DIR/gates:/opt/ralph/gates:ro" \
     -v "$DO_TASK_SOURCE:/opt/ralph/DO_TASK.md:ro" \
     -v "$RALPH_DIR/BOOTSTRAP.md:/opt/ralph/BOOTSTRAP.md:ro" \
     -v "$RALPH_DIR/VERIFY.md:/opt/ralph/VERIFY.md:ro" \
