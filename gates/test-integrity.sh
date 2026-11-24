@@ -1,6 +1,7 @@
 #!/bin/bash
-# test-integrity.sh — flag changes to tests that could hide broken code, in the
-# uncommitted work (diff against HEAD): removed/changed assertions, removed test
+# test-integrity.sh [PATH...] — flag changes to tests that could hide broken code, in the
+# uncommitted work (diff against HEAD), limited to PATH... when given (the files of the task being judged: another
+# Epic's uncommitted edits must not block this one): removed/changed assertions, removed test
 # functions, deleted test files, added skip/xfail. New test files are always fine.
 # Prints the findings; exit 1 when there is any, 0 otherwise.
 GATES_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -43,7 +44,7 @@ while IFS=$'\t' read -r status path _; do
         done <<<"$diff"
         ;;
     esac
-done < <(git diff HEAD --name-status -M)
+done < <(git diff HEAD --name-status -M -- "$@")
 
 [ "$findings" -eq 0 ] && echo "OK no suspicious test changes"
 exit "$findings"

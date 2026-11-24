@@ -439,6 +439,13 @@ check_required_branch() {
     exit 8
 }
 
+# An Epic whose last closed task is an [impl] and has nothing open is stuck (no [review] will ever follow): create it.
+# Runs before the loop counts open work, otherwise such an Epic looks "done" and its work is never committed.
+sweep_epics() {
+    gates_enabled || return 0
+    bash "$GATES_DIR/epic-sweep.sh" </dev/null
+}
+
 # Decide what the next iteration is before waking the agent.
 #   return 0: the iteration was handled by a gate (no agent needed)
 #   return 1: run the agent with $PROMPT_FILE (DO_TASK + a LOOP CONTEXT section)
@@ -530,7 +537,8 @@ gate_iteration() {
             fi
             echo ""
             echo "TEST-INTEGRITY GATE (diff of test files against HEAD):"
-            bash "$GATES_DIR/test-integrity.sh"
+            # shellcheck disable=SC2086 # one path per word
+            bash "$GATES_DIR/test-integrity.sh" $files </dev/null
         } >>"$GATE_CONTEXT_FILE"
         record_gate_metrics review-prechecks "$id" "$(( $(date +%s) - t0 ))"
         ;;
@@ -939,6 +947,7 @@ while true; do
     # Re-check environment each iteration (tokens can expire mid-run)
     preflight_check
     check_required_branch
+    sweep_epics
 
     # Task detection: get counts (fallback to empty if beads not initialized)
     TASK_JSON=$(bd list --json 2>/dev/null || echo "[]")

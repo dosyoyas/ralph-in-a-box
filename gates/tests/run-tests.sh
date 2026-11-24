@@ -355,6 +355,52 @@ RALPH_TEST_CMD='exit 0' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
 check "weakened tests fall back to the agent (exit 10)" eq "$?" 10
 check "context lists the finding" grep -q 'REMOVED/CHANGED assertion' "$GATE_CONTEXT_FILE"
 
+echo "integrity gate scope and the Epic sweeper"
+new_repo scope
+mkdir tests && printf 'def test_a():\n    assert f() == 1\n' >tests/test_a.py && printf 'def test_b():\n    assert g() == 2\n' >tests/test_b.py && git add -A && git commit -q -m t
+printf 'def test_a():\n    pass\n' >tests/test_a.py
+bash "$GATES/test-integrity.sh" >/dev/null
+check "without paths the whole tree is checked (a weakened test is flagged)" eq "$?" 1
+bash "$GATES/test-integrity.sh" tests/test_b.py >/dev/null
+check "with paths only those files are judged (another Epic's edit does not block)" eq "$?" 0
+bash "$GATES/test-integrity.sh" tests/test_a.py >/dev/null
+check "a listed file that was weakened is still flagged" eq "$?" 1
+
+setup_test_task gate_scope
+printf 'def test_other():\n    assert 1 == 1\n' >tests/test_other.py && git add tests/test_other.py && git commit -q -m seed
+printf 'def test_other():\n    pass\n' >tests/test_other.py   # another Epic's uncommitted edit, not in this task
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "another Epic's weakened test does not hand this task to the agent (exit 0)" eq "$?" 0
+check "and it is not swept into this commit" eq "$(git show --name-only --format= HEAD | tr '\n' ' ')" "tests/test_a.py "
+
+new_repo sweep
+sw() { bash "$GATES/epic-sweep.sh" 2>&1; }
+E1=$(mk "Epic: Stuck" --type epic --priority 0)
+I1=$(mk "[impl] Thing" --parent "$E1" --type task --priority 0 --description x)
+bd update "$I1" --notes "FILES MODIFIED: src/a.py, tests/test_a.py" >/dev/null 2>&1
+bd close "$I1" --reason done >/dev/null 2>&1
+R1=$(mk "[impl] RETRY: Stuck" --parent "$E1" --type task --priority 0 --description x)
+bd update "$R1" --notes "FILES MODIFIED: src/a.py" >/dev/null 2>&1
+bd close "$R1" --reason fixed >/dev/null 2>&1
+E2=$(mk "Epic: Healthy" --type epic --priority 1)
+I2=$(mk "[impl] Other" --parent "$E2" --type task --priority 0 --description x)
+bd close "$I2" --reason done >/dev/null 2>&1
+mk "[review] Review: Healthy" --parent "$E2" --type task --priority 0 --description x >/dev/null
+E3=$(mk "Epic: Tested" --type epic --priority 2)
+I3=$(mk "[impl] Done" --parent "$E3" --type task --priority 0 --description x)
+bd close "$I3" --reason done >/dev/null 2>&1
+T3=$(mk "[test] Test: Tested" --parent "$E3" --type task --priority 0 --description x)
+bd close "$T3" --reason done >/dev/null 2>&1
+out=$(sw)
+check "the sweeper reports the stuck Epic" grep -q "Epic $E1" <<<"$out"
+reviews=$(bd list --all --json | jq -r --arg e "$E1" '[.[] | select(.parent == $e and (.title | startswith("[review]")))] | length')
+check "it creates exactly one [review] for the stuck Epic" eq "$reviews" 1
+check "the new [review] lists the files of the Epic's [impl] notes" grep -q 'src/a.py' <(bd list --all --json | jq -r --arg e "$E1" '.[] | select(.parent == $e and (.title | startswith("[review]"))) | .description')
+check "an Epic that already has an open [review] is left alone" eq "$(bd list --all --json | jq -r --arg e "$E2" '[.[] | select(.parent == $e)] | length')" 2
+check "an Epic whose last closed task is a [test] is left alone" eq "$(bd list --all --json | jq -r --arg e "$E3" '[.[] | select(.parent == $e)] | length')" 2
+sw >/dev/null
+check "a second sweep creates nothing more" eq "$(bd list --all --json | jq -r --arg e "$E1" '[.[] | select(.parent == $e and (.title | startswith("[review]")))] | length')" 1
+
 echo "build-prompt.sh"
 for DT in "$GATES/../python/DO_TASK_PYTHON.md" "$GATES/../rust/DO_TASK_RUST.md" "$GATES/../DO_TASK.md"; do
     [ -f "$DT" ] || continue

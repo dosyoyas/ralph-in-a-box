@@ -109,7 +109,9 @@ if [[ "$cmd" == *"{modules}"* || "$cmd" == *"{test_files}"* ]]; then
     cmd=${cmd//\{modules\}/${mods# }}
 fi
 
-integrity=$("$GATES_DIR/test-integrity.sh")
+int_files=$(parse_file_list <<<"$desc" | filter_committable)
+# shellcheck disable=SC2086 # one path per word
+integrity=$("$GATES_DIR/test-integrity.sh" $int_files)
 if [ $? -ne 0 ]; then
     fallback "the test-integrity gate flagged changes to tests; judge them against the acceptance criteria before committing" "$integrity"
 fi

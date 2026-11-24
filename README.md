@@ -355,12 +355,14 @@ The loop does the mechanical work itself and only wakes the agent when judgement
 | Task claim + context | the loop claims the task and puts its description, the Epic view and the working tree in the prompt (`# LOOP CONTEXT`) | — |
 | Prompt size | `build-prompt.sh` keeps only the phase's section of `DO_TASK` | — |
 | `[review]` lint + integrity | `static-gate.sh` (ruff, pyrefly, biome, gitleaks; `cargo fmt` / `clippy` for Rust) and `test-integrity.sh` run first; the result is injected into the review prompt | — (the agent fixes findings) |
+| Stuck Epics | `epic-sweep.sh`, before each iteration: an Epic whose tasks are all closed with an `[impl]` last (e.g. a `RETRY` closed without a `[review]`) gets the missing `[review]` | — |
 | `[test]` run, commit, close | `test-gate.sh`: re-runs the static gate, runs the tests, writes `ralph-evidence/<epic>-test-run.log`, commits the Epic's files, closes `[test]`/Epic; on failure creates the `[impl] RETRY` task | tests weakened (integrity gate), unknown test setup, RETRY limit reached, commit failure |
 | Final report | `verify.sh` checks coverage (closed deliverables vs the archived plan) | — |
 
 - Test command: `RALPH_TEST_CMD`, or a `RALPH_TEST_CMD: <cmd>` line in `AGENTS.md`, or a backticked `pytest` / `cargo test`
   command on an `AGENTS.md` line about tests, or the language default (`python -m pytest -v` / `cargo test`). An `AGENTS.md`
   with a testing section the gate cannot interpret makes the agent run the tests.
+- The test-integrity gate judges only the files of the task being reviewed or tested: another Epic's uncommitted edits never block it.
 - Environment errors in the test output (cargo registry unreachable, Docker down, ...) halt the loop (exit 6).
 - `TEST_GATE_TIMEOUT` (default 3600 s) bounds the test run.
 - Per-run cost/usage is appended to `/tmp/ralph_logs/claude_metrics_<project>.jsonl`; summarise it with `ralph-report.py`.
