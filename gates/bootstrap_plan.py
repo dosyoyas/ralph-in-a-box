@@ -7,8 +7,14 @@ Same structure BOOTSTRAP.md asks the agent for:
   any other ## section    -> shared context copied into every task
   plus one [audit] Epic/task depending on every [impl] task.
 
+Usage: bootstrap_plan.py [--check] [PLAN]      (PLAN defaults to ACTION_PLAN.md)
+
+  --check   only decide whether the plan can be parsed with certainty. Creates nothing, runs neither bd nor git,
+            and prints what it found (exit 0) or why it would fall back to the agent (exit 2, on stderr). A plan the
+            check accepts is bootstrapped by this script in normal mode.
+
 Exit codes:
-  0  tasks created
+  0  tasks created (--check: the plan parses)
   2  the plan cannot be parsed with certainty; NOTHING was created, run the agent BOOTSTRAP instead
   3  beads failed after creating some tasks (do not fall back: it would duplicate them)
 """
@@ -18,7 +24,9 @@ import re
 import subprocess
 import sys
 
-PLAN = sys.argv[1] if len(sys.argv) > 1 else "ACTION_PLAN.md"
+ARGS = [a for a in sys.argv[1:] if a != "--check"]
+CHECK = "--check" in sys.argv[1:]
+PLAN = ARGS[0] if ARGS else "ACTION_PLAN.md"
 CHECKBOX = re.compile(r"^\s*-\s*\[[ xX]\]\s*(.*)$")
 
 
@@ -157,6 +165,13 @@ def main():
     except (Unparseable, OSError) as e:
         print(f"[bootstrap_plan] cannot parse {PLAN}: {e}", file=sys.stderr)
         return 2
+
+    if CHECK:
+        n_deliv = sum(len(f["deliverables"]) for f in features)
+        n_crit = sum(len(d["criteria"]) for f in features for d in f["deliverables"])
+        print(f"[bootstrap_plan] check OK: {len(features)} features, {n_deliv} deliverables, "
+              f"{n_crit} acceptance criteria")
+        return 0
 
     base_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     try:

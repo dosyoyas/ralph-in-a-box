@@ -256,7 +256,34 @@ tail -f /tmp/ralph_logs/claude_live_myproject.log | jq -R 'fromjson? // .'
 | `5`   | Finished with warnings (verify gaps or dirty workspace) |
 | `6`   | Environment error (AWS token expired, Docker OOM/unreachable, agent usage limit reached) |
 | `7`   | Halted — consecutive no-progress iterations (`MAX_NO_PROGRESS`); the agent produced no work, whether it exited normally or was killed by the watchdog (often a model that can't emit valid tool calls, or a long silent command) |
+| `8`   | Wrong branch — `RALPH_REQUIRE_BRANCH` is set and the checkout is on another branch (nothing ran, recorded in `BLOCKERS.md`) |
 | other | Agent error                            |
+
+### Machine-readable result
+
+Whenever the loop ends — for any exit code — it writes two files into the evidence directory (`ralph-evidence/`, or
+`RALPH_EVIDENCE_DIR`), so a script does not have to scrape the terminal. A previous run's files are removed at startup, and
+the gates never commit them.
+
+- `verify-report.md` — the last acceptance report, or a one-line note that none was produced.
+- `result.json`:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | `1` |
+| `exit_code` | the exit code above |
+| `reason` | `complete`, `complete_with_warnings`, `blocked`, `max_iterations`, `max_cost`, `usage_limit` (the agent's quota ran out), `env_error` (any other exit 6), `no_progress`, `wrong_branch`, `no_plan` (exit 1) or `agent_error` |
+| `verify_result` | `PASS`, `FAIL`, or `NONE` when the final verification did not run |
+| `deliverables_met` / `deliverables_total` | from the report, `null` if it has none |
+| `criteria_met` / `criteria_unmet` / `criteria_unproven` | from the report, `null` if it has none |
+| `iterations`, `cost_usd`, `agent` | `cost_usd` is `null` unless the agent reports cost (Claude) |
+| `head_sha`, `plan_file`, `finished_at` | commit at the end, newest archived plan, UTC ISO 8601 |
+
+### Checking a plan before running it
+
+`python3 gates/bootstrap_plan.py --check [ACTION_PLAN.md]` says whether the plan can be turned into tasks by the script
+alone (no agent), without running `bd` or `git` and without creating anything: exit 0 with a summary, or exit 2 with the
+reason on stderr (for example a `Blocked by` that names no deliverable, or a deliverable without `- [ ]` criteria).
 
 ## Agent Settings
 

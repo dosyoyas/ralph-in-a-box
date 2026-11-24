@@ -62,7 +62,24 @@ cleanup() {
     rm -f "$LAST_TOOL_ERROR_FILE" 2>/dev/null
     rm -f "$WATCHDOG_FIRED_FILE" 2>/dev/null
 }
-trap cleanup EXIT
+# State for the machine-readable end of the run (gates/write-result.sh): the printed acceptance report, whether the
+# final verification ran (NONE/PASS/FAIL) and an optional reason overriding the one derived from the exit code.
+VERIFY_REPORT_FILE=$(mktemp /tmp/ralph-verifyreport-XXXXXX)
+VERIFY_STATE=NONE
+RESULT_REASON=""
+# On every exit, write result.json + verify-report.md into the evidence directory, then clean up. Never changes the
+# exit code of the loop.
+on_exit() {
+    local rc=$?
+    if [ "${RALPH_GATES:-1}" = "1" ] && [ -f "$GATES_DIR/write-result.sh" ]; then
+        RESULT_REASON="$RESULT_REASON" RALPH_VERIFY_STATE="$VERIFY_STATE" RALPH_VERIFY_REPORT_FILE="$VERIFY_REPORT_FILE" \
+            RESULT_ITERATIONS="$ITERATION" RESULT_COST="$TOTAL_COST" RALPH_AGENT="$RALPH_AGENT" \
+            bash "$GATES_DIR/write-result.sh" "$rc" >/dev/null 2>&1 </dev/null || true
+    fi
+    rm -f "$VERIFY_REPORT_FILE" 2>/dev/null
+    cleanup
+}
+trap on_exit EXIT
 # The handler does not exit (the loop stops through the agent-error path), so
 # remember the interrupt: after Ctrl+C / docker stop a watchdog kill must not be
 # mistaken for a plain timeout (see WATCHDOG_FIRED_FILE).
@@ -662,6 +679,7 @@ invoke_agent() {
         echo ""
         echo "Fix: ask your admin to raise the limit (or wait for the quota to"
         echo "reset), then re-launch ralph."
+        RESULT_REASON=usage_limit # result.json tells a quota stop from other exit-6 environment errors
         exit 6
     fi
 
@@ -895,6 +913,9 @@ else
 fi
 echo "Starting $RALPH_AGENT automation loop with beads..."
 
+# A result left by a previous run must never be read as this run's: clear it before anything can stop the loop.
+gates_enabled && [ -f "$GATES_DIR/write-result.sh" ] && { bash "$GATES_DIR/write-result.sh" clear </dev/null >/dev/null 2>&1 || true; }
+
 # Run pre-flight checks once at startup
 preflight_check
 
@@ -1049,8 +1070,12 @@ while true; do
             echo "=== Verify $(date) ===" >>"$LOG_FILE"
 
             protect_before
-            run_verify
+            # tee keeps the console output as it was and keeps a copy for verify-report.md; the process
+            # substitution leaves run_verify in this shell, so its exit status and any `exit` inside it still count
+            run_verify > >(tee "$VERIFY_REPORT_FILE")
             VERIFY_EXIT=$?
+            VERIFY_STATE=PASS
+            [ "$VERIFY_EXIT" -ne 0 ] && VERIFY_STATE=FAIL
             protect_after
             label_run_issues
 

@@ -106,6 +106,40 @@ printf '%s\n' '## Feature 1: First (ticket TK-12)' '### One' '**Blocked by:** No
 python3 "$GATES/bootstrap_plan.py" >/dev/null 2>&1
 check "without RALPH_FEATURE_TAG_RE no tag is stored" eq "$(bd list --all --json | jq -r '.[] | select(.title | startswith("Epic: First")) | .description // ""')" ""
 
+echo "bootstrap_plan.py --check (parse check: no beads, no git, no agent)"
+BP="$GATES/bootstrap_plan.py"
+PY=$(command -v python3)
+CHK="$TMP/chk"; rm -rf "$CHK"; mkdir -p "$CHK" && cd "$CHK" # a plain directory: no git repo, no .beads
+printf '%s' "$PLAN" >ACTION_PLAN.md
+cp ACTION_PLAN.md before.md
+out=$(env PATH=/nonexistent "$PY" "$BP" --check ACTION_PLAN.md 2>&1); rc=$?
+check "a well-formed plan passes the check (exit 0), with no bd and no git available" eq "$rc" 0
+check "the check reports what it found" grep -q '3 deliverables' <<<"$out"
+check "the check creates no .beads directory" bash -c '[ ! -e .beads ]'
+check "the check archives nothing and leaves the plan untouched" bash -c '[ -z "$(ls ACTION_PLAN_*.md 2>/dev/null)" ] && cmp -s ACTION_PLAN.md before.md'
+env PATH=/nonexistent "$PY" "$BP" --check >/dev/null 2>&1
+check "without a path the check reads ACTION_PLAN.md" eq "$?" 0
+printf '## Feature 1: X\n### D\n**Blocked by:** Nonexistent thing\n\nbody\n\n- [ ] ok\n' >ACTION_PLAN.md
+out=$("$PY" "$BP" --check ACTION_PLAN.md 2>&1); rc=$?
+check "a Blocked by that names no deliverable fails the check" bash -c '[ "$1" -ne 0 ]' _ "$rc"
+check "the message names the unknown blocker" grep -q 'Nonexistent thing' <<<"$out"
+printf '## Feature 1: X\n### Lonely deliverable\n**Blocked by:** None\n\nbody without criteria\n' >ACTION_PLAN.md
+out=$("$PY" "$BP" --check ACTION_PLAN.md 2>&1); rc=$?
+check "a deliverable without criteria fails the check" bash -c '[ "$1" -ne 0 ]' _ "$rc"
+check "the message names the deliverable" grep -q 'Lonely deliverable' <<<"$out"
+printf '# Plan\n\nJust prose.\n' >ACTION_PLAN.md
+"$PY" "$BP" --check ACTION_PLAN.md >/dev/null 2>&1
+check "a plan with no features fails the check" bash -c '[ "$1" -ne 0 ]' _ "$?"
+"$PY" "$BP" --check missing.md >/dev/null 2>&1
+check "a missing file fails the check" bash -c '[ "$1" -ne 0 ]' _ "$?"
+check "the check never creates a beads dir even after failures" bash -c '[ ! -e .beads ]'
+new_repo chkboot
+printf '%s' "$PLAN" >ACTION_PLAN.md
+"$PY" "$BP" --check ACTION_PLAN.md >/dev/null 2>&1
+check "check on a repo with beads creates no task" eq "$(bd list --all --json | jq 'length')" 0
+python3 "$BP" ACTION_PLAN.md >/dev/null 2>&1
+check "a plan the check accepts is bootstrapped by the script (exit 0, tasks created)" eq "$? $(bd list --all --json | jq 'length')" "0 5"
+
 echo "next-task.sh"
 new_repo next
 printf '%s' "$PLAN" >ACTION_PLAN.md
@@ -538,6 +572,66 @@ printf '#!/bin/bash\necho "cargo $*" >>"$0.log"\nexit 0\n' >"$STUBS/cargo"; chmo
 out=$(bash "$GATES/static-gate.sh" src/main.rs)
 check "rust files run cargo fmt and clippy" grep -q 'PASS cargo clippy' <<<"$out"
 rm -f "$STUBS/cargo" "$STUBS/cargo.log"
+
+echo "result.json and verify-report.md (machine-readable end of a run)"
+new_repo result
+WR="$GATES/write-result.sh"
+EV="$RALPH_EVIDENCE_DIR"
+rj() { jq -r "$1" "$EV/result.json"; }
+printf 'ACTION_PLAN.md Acceptance Report\n\nCoverage: 2/2 deliverables fully met\nCriteria: 5 ✓ / 0 ✗ / 0 ?\n\nVERIFY_RESULT: PASS\n' >"$TMP/report.txt"
+echo p >ACTION_PLAN_20260101_000000.md
+RALPH_AGENT=cursor RALPH_VERIFY_STATE=PASS RALPH_VERIFY_REPORT_FILE="$TMP/report.txt" RESULT_ITERATIONS=7 RESULT_COST=0 bash "$WR" 0
+check "exit 0: result.json is valid JSON" jq -e . "$EV/result.json" >/dev/null
+check "exit 0: exit_code 0, reason complete, verify PASS" eq "$(rj '"\(.exit_code) \(.reason) \(.verify_result)"')" "0 complete PASS"
+check "exit 0: coverage and criteria counts come from the report" eq "$(rj '"\(.deliverables_met)/\(.deliverables_total) \(.criteria_met) \(.criteria_unmet) \(.criteria_unproven)"')" "2/2 5 0 0"
+check "exit 0: iterations, agent, plan file and sha are recorded" eq "$(rj '"\(.iterations) \(.agent) \(.plan_file) \(.head_sha == "'"$(git rev-parse HEAD)"'")"')" "7 cursor ACTION_PLAN_20260101_000000.md true"
+check "a non-claude agent reports no cost (null)" eq "$(rj '.cost_usd')" "null"
+check "the schema version is 1 and finished_at is UTC ISO 8601" eq "$(rj '"\(.schema_version) \(.finished_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))"')" "1 true"
+check "verify-report.md holds the printed report" grep -q 'VERIFY_RESULT: PASS' "$EV/verify-report.md"
+RALPH_AGENT=claude RALPH_VERIFY_STATE=NONE RESULT_ITERATIONS=3 RESULT_COST=1.25 bash "$WR" 0
+check "claude reports its cost" eq "$(rj '.cost_usd')" "1.25"
+check "a run without report: counts null, verify NONE, report file says so" eq "$(rj '"\(.verify_result) \(.deliverables_total) \(.criteria_met)"')" "NONE null null"
+check "a run without report: verify-report.md says none was produced" grep -qi 'no acceptance report' "$EV/verify-report.md"
+for pair in "1 no_plan" "2 blocked" "3 max_iterations" "4 max_cost" "5 complete_with_warnings" "6 env_error" "7 no_progress" "8 wrong_branch" "42 agent_error"; do
+    set -- $pair
+    RALPH_AGENT=cursor RALPH_VERIFY_STATE=NONE bash "$WR" "$1"
+    check "exit $1 is recorded with reason $2" eq "$(rj '"\(.exit_code) \(.reason)"')" "$1 $2"
+done
+RALPH_AGENT=cursor RALPH_VERIFY_STATE=NONE RESULT_REASON=usage_limit bash "$WR" 6
+check "exit 6 with RESULT_REASON=usage_limit is told apart from env_error" eq "$(rj '.reason')" "usage_limit"
+RALPH_AGENT=cursor RALPH_VERIFY_STATE=FAIL bash "$WR" 5
+check "a failed verification is recorded" eq "$(rj '.verify_result')" "FAIL"
+bash "$WR" clear
+check "clear removes a stale result.json and verify-report.md" bash -c '[ ! -e "$1/result.json" ] && [ ! -e "$1/verify-report.md" ]' _ "$EV"
+bash "$WR" 0
+check "the writer never fails the loop (exit 0 even with no env at all)" eq "$?" 0
+check "the evidence directory follows RALPH_EVIDENCE_DIR" bash -c '[ -f "$1/result.json" ]' _ "$EV"
+check "result.json is never committable (evidence directory)" bash -c ". '$GATES/common.sh'; is_no_commit \"\$(evidence_dir)/result.json\" && is_no_commit \"\$(evidence_dir)/verify-report.md\""
+git add -A . >/dev/null 2>&1
+check "an untracked evidence directory leaves no tracked-file change" eq "$(git status --porcelain | grep -v '^A ' | grep -v '^??' | wc -l | tr -d ' ')" "0"
+
+# Real loop, for the two exits that happen before any agent runs: the trap writes the result and the exit code is unchanged
+LSTUB="$TMP/loopstubs"; mkdir -p "$LSTUB"
+printf '#!/bin/bash\nexit 0\n' >"$LSTUB/aws"
+printf '#!/bin/bash\n[ "$1" = "info" ] && [ "$2" = "--format" ] && echo 17179869184\nexit 0\n' >"$LSTUB/docker"
+chmod +x "$LSTUB/aws" "$LSTUB/docker"
+run_loop() { # env assignments... -> runs the real loop in the current repo
+    env PATH="$LSTUB:$PATH" GATES_DIR="$GATES" RALPH_LOG_DIR="$TMP/looplogs" RALPH_PROJECT_NAME=looptest RALPH_AGENT=cursor \
+        RALPH_EVIDENCE_DIR="$PWD/ralph-evidence" VERIFY_FILE="$TMP/none.md" "$@" bash "$GATES/../ralph-loop.sh" </dev/null
+}
+mkdir -p "$TMP/looplogs"
+mkdir -p "$TMP/loop1" && cd "$TMP/loop1" && git init -q . && echo b >b && git add -A && git commit -q -m b
+out=$(run_loop 2>&1); rc=$?
+check "loop with no tasks and no plan still exits 1" eq "$rc" 1
+check "loop console output does not mention the result file" bash -c '! grep -q "result.json" <<<"$1"' _ "$out"
+check "loop exit 1 leaves result.json with reason no_plan" eq "$(jq -r '"\(.exit_code) \(.reason)"' ralph-evidence/result.json)" "1 no_plan"
+out=$(run_loop RALPH_REQUIRE_BRANCH=release-only 2>&1); rc=$?
+check "loop on the wrong branch still exits 8" eq "$rc" 8
+check "loop exit 8 leaves result.json with reason wrong_branch" eq "$(jq -r '"\(.exit_code) \(.reason)"' ralph-evidence/result.json)" "8 wrong_branch"
+echo stale >ralph-evidence/verify-report.md
+out=$(run_loop 2>&1)
+check "a new run clears the previous verify-report.md at start" bash -c '! grep -q stale "$1"' _ ralph-evidence/verify-report.md
+check "the loop wires the usage-limit reason before its exit 6" bash -c 'awk "/RESULT_REASON=usage_limit/{f=1} f&&/exit 6/{print \"ok\"; exit}" "$1" | grep -q ok' _ "$GATES/../ralph-loop.sh"
 
 [ -f "$GATES/tests/priority-tests.sh" ] && . "$GATES/tests/priority-tests.sh"
 
