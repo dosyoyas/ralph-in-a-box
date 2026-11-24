@@ -239,10 +239,25 @@ AC TABLE:
 AC1 | PENDING | TEST: tests/test_a.py::test_does_not_exist — to run in [test]
 
 RETRY: 0" >/dev/null 2>&1
-: >"$GATE_CONTEXT_FILE"
 RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
-check "a PENDING test that does not exist falls back (exit 10)" eq "$?" 10
-check "fallback names the missing function" grep -q 'test_does_not_exist' "$GATE_CONTEXT_FILE"
+check "a PENDING test that does not exist is only a note (the green run is committed, exit 0)" eq "$?" 0
+check "the commit happened" eq "$(git log --oneline | wc -l | tr -d ' ')" 2
+check "the close reason names the id that could not be matched" grep -q 'test_does_not_exist' <(bd show "$TID" --json | jq -r 'if type=="array" then .[0].close_reason else .close_reason end')
+
+setup_test_task gate_noisy_ids
+printf 'class TestX:\n    def test_alpha(self): pass\n    def test_beta(self): pass\n' >tests/test_a.py
+bd update "$TID" --description "FILES:
+- tests/test_a.py
+
+AC TABLE:
+AC1 | PENDING | TEST: test_a (35 OK in the retry run), test_alpha; STATIC x.py:3 — to run in [test]
+AC2 | PENDING | TEST: tests.test_a.TestX.test_beta;
+AC3 | PENDING | TEST: same test (unchanged) / test_alpha
+
+RETRY: 0" >/dev/null 2>&1
+RALPH_TEST_CMD='echo ok' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
+check "bare module names, punctuation and prose in ids resolve (exit 0)" eq "$?" 0
+check "and nothing is reported as unmatched" bash -c '! grep -q "Not matched by name" <<<"$1"' _ "$(bd show "$TID" --json | jq -r 'if type=="array" then .[0].close_reason else .close_reason end')"
 
 setup_test_task gate_fail
 RALPH_TEST_CMD='echo "FAILED test_a - assert 1 == 2"; exit 1' bash "$GATES/test-gate.sh" "$TID" >"$TMP/out.txt" 2>&1
@@ -400,6 +415,21 @@ check "an Epic that already has an open [review] is left alone" eq "$(bd list --
 check "an Epic whose last closed task is a [test] is left alone" eq "$(bd list --all --json | jq -r --arg e "$E3" '[.[] | select(.parent == $e)] | length')" 2
 sw >/dev/null
 check "a second sweep creates nothing more" eq "$(bd list --all --json | jq -r --arg e "$E1" '[.[] | select(.parent == $e and (.title | startswith("[review]")))] | length')" 1
+
+echo "static-gate.sh: secrets are scanned on the changed files only"
+new_repo leaks
+echo 'x = 1' >a.py && echo 'y = 2' >b.py
+printf '#!/bin/bash\necho "$*" >>"$STUBS_LOG"\nexit 0\n' >"$STUBS/gitleaks"
+export STUBS_LOG="$TMP/gitleaks.log"; : >"$STUBS_LOG"
+out=$(bash "$GATES/static-gate.sh" a.py b.py)
+check "gitleaks runs without git history (--no-git)" grep -q -- '--no-git' "$STUBS_LOG"
+check "once per changed file" eq "$(wc -l <"$STUBS_LOG" | tr -d ' ')" 2
+check "reported as PASS on the changed files" grep -q 'PASS gitleaks (changed files)' <<<"$out"
+printf '#!/bin/bash\ncase "$*" in *b.py*) echo "Finding: generic-api-key"; exit 1;; esac\nexit 0\n' >"$STUBS/gitleaks"
+out=$(bash "$GATES/static-gate.sh" a.py b.py)
+check "a leak in one file fails the gate (exit 1)" eq "$?" 1
+check "and names the file" grep -q 'b.py' <<<"$out"
+printf '#!/bin/bash\nexit 0\n' >"$STUBS/gitleaks"
 
 echo "build-prompt.sh"
 for DT in "$GATES/../python/DO_TASK_PYTHON.md" "$GATES/../rust/DO_TASK_RUST.md" "$GATES/../DO_TASK.md"; do

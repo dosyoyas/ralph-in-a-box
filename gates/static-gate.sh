@@ -49,6 +49,25 @@ if [ "${#rs[@]}" -gt 0 ] && [ -f Cargo.toml ]; then
     check "cargo fmt --check" cargo fmt --all --check
     check "cargo clippy" cargo clippy --all-targets --all-features -- -D warnings -W clippy::cargo -A clippy::multiple_crate_versions
 fi
-[ -z "${RALPH_SKIP_GITLEAKS:-}" ] && check "gitleaks detect" gitleaks detect --no-banner --redact
+# Secrets: only the files under check. A repo-wide scan of the whole history reports the same old findings on every
+# run, which says nothing about this change.
+if [ -z "${RALPH_SKIP_GITLEAKS:-}" ] && [ "$#" -gt 0 ]; then
+    if command -v gitleaks >/dev/null 2>&1; then
+        leaks=""
+        for f in "$@"; do
+            [ -f "$f" ] || continue
+            out=$(gitleaks detect --no-git --source "$f" --no-banner --redact 2>&1) || leaks="$leaks
+    $f: $(printf '%s' "$out" | head -n 3 | tr '\n' ' ' | head -c 300)"
+        done
+        if [ -z "$leaks" ]; then
+            echo "PASS gitleaks (changed files)"
+        else
+            failed=1
+            echo "FAIL gitleaks (changed files)$leaks"
+        fi
+    else
+        echo "SKIP gitleaks (not installed)"
+    fi
+fi
 [ "${#py[@]}" -eq 0 ] && [ "${#js[@]}" -eq 0 ] && [ "${#rs[@]}" -eq 0 ] && echo "NOTE no python/js/rust files among the changed files"
 exit "$failed"
