@@ -539,6 +539,8 @@ out=$(bash "$GATES/static-gate.sh" src/main.rs)
 check "rust files run cargo fmt and clippy" grep -q 'PASS cargo clippy' <<<"$out"
 rm -f "$STUBS/cargo" "$STUBS/cargo.log"
 
+[ -f "$GATES/tests/priority-tests.sh" ] && . "$GATES/tests/priority-tests.sh"
+
 # Extension tests (present only where gates/ext.sh exists)
 unset RALPH_NO_EXT
 [ -f "$GATES/tests/ext-tests.sh" ] && . "$GATES/tests/ext-tests.sh"

@@ -120,8 +120,11 @@ def bd(*args):
     return r.stdout
 
 
+MAX_PRIORITY = 4  # bd accepts only 0-4; later deliverables/Features share 4 and `Blocked by` still fixes the real order
+
+
 def create(title, *, parent=None, kind="task", priority=0, description=None):
-    args = ["create", title, "--type", kind, "--priority", str(priority), "--json"]
+    args = ["create", title, "--type", kind, "--priority", str(min(priority, MAX_PRIORITY)), "--json"]
     if parent:
         args += ["--parent", parent]
     if description:
